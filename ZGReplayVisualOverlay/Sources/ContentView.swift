@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var latestState = "No analyzer state yet."
     @State private var hasAccess = false
     @State private var annotatedReplayURL: URL?
+    @State private var selectedPage = 0
 
     var body: some View {
         ZStack {
@@ -53,18 +54,104 @@ struct ContentView: View {
         ScrollView {
             VStack(spacing: 16) {
                 header
-                screenRecordingCard
-                floatingPreviewCard
-                controlsCard
-                analyzerCard
-                diagnosticsCard
-                limitCard
+                pageSelector
+                pageContent
                 footerCredit
             }
             .padding(18)
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch selectedPage {
+        case 1:
+            featureStrip
+            controlsCard
+        case 2:
+            analyzerCard
+            diagnosticsCard
+            limitCard
+        default:
+            screenRecordingCard
+            floatingPreviewCard
+            featureStrip
+        }
+    }
+
+    private var pageSelector: some View {
+        HStack(spacing: 8) {
+            pageButton(index: 0, title: "Live", icon: "record.circle")
+            pageButton(index: 1, title: "Assist", icon: "scope")
+            pageButton(index: 2, title: "Status", icon: "waveform.path.ecg")
+        }
+        .padding(5)
+        .background(Color.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+        )
+    }
+
+    private func pageButton(index: Int, title: String, icon: String) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                selectedPage = index
+            }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(selectedPage == index ? .black : .white.opacity(0.72))
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(selectedPage == index ? Color(red: 0.15, green: 0.88, blue: 1.0) : Color.white.opacity(0.035))
+        )
+    }
+
+    private var featureStrip: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            featureTile("Live Scanner", "bolt.viewfinder", store.settings.scannerEnabled ? "RUNNING" : "HELD")
+            featureTile("Scan Route", "point.3.connected.trianglepath.dotted", scanRouteName(store.settings.scanRoute))
+            featureTile("Prediction", "scope", predictionStyleName(store.settings.predictionStyle))
+            featureTile("Hold Window", "pause.circle", "\(Int(store.settings.holdScanSeconds))s")
+        }
+    }
+
+    private func featureTile(_ title: String, _ icon: String, _ value: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .black))
+                .foregroundStyle(Color(red: 0.15, green: 0.88, blue: 1.0))
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.07))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                Text(value)
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(minHeight: 64)
+        .background(Color.black.opacity(0.58))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+        )
     }
 
     private var header: some View {
@@ -109,11 +196,13 @@ struct ContentView: View {
                     warningBox("Recorder extension not detected inside this installed app. If Z G Overlay Record is missing from Apple's sheet, your signer probably did not embed/sign the .appex.")
                 }
 
+                scannerQuickControls
+
                 VStack(alignment: .leading, spacing: 8) {
                     stepLine("1", "Tap START SCREEN RECORDING")
-                    stepLine("2", "Direct mode should open Z G Overlay Record. If not, turn Direct mode OFF and check the chooser.")
+                    stepLine("2", "Keep Scanner ON for live reads, or STOP/HOLD when a prediction is lined up.")
                     stepLine("3", "Tap Start Broadcast, then switch to your pool screen")
-                    stepLine("4", "Stop from the red status bar / Dynamic Island / Control Center")
+                    stepLine("4", "Move the floating preview aside and read the held result.")
                 }
                 .padding(12)
                 .background(Color.white.opacity(0.055))
@@ -244,10 +333,49 @@ struct ContentView: View {
         }
     }
 
+    private var scannerQuickControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    setScanner(enabled: true)
+                } label: {
+                    Label("START SCANNER", systemImage: "bolt.viewfinder")
+                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(store.settings.scannerEnabled ? Color(red: 0.06, green: 0.70, blue: 0.42) : Color(red: 0.05, green: 0.58, blue: 1.0))
+
+                Button {
+                    setScanner(enabled: false)
+                } label: {
+                    Label("STOP / HOLD", systemImage: "pause.circle.fill")
+                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(Color(red: 0.18, green: 0.90, blue: 1.0))
+            }
+
+            Text(store.settings.scannerEnabled ? "Scanner is live. The floating preview refreshes as the broadcast reads frames." : "Scanner is stopped. The last prediction stays visible for the hold time below.")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.66))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     private var controlsCard: some View {
         panel {
             VStack(spacing: 12) {
                 sectionTitle("Prediction Controls")
+                controlToggle("Scanner Running", \.scannerEnabled)
+                controlToggle("Fast Scan Mode", \.fastScanMode)
+                controlToggle("Hold Last Scan", \.holdScanResult)
                 controlToggle("Enable Prediction Lines", \.predictionEnabled)
                 controlToggle("Keep Line", \.keepLine)
                 controlToggle("Manual Choose Pocket", \.manualPocket)
@@ -258,6 +386,31 @@ struct ContentView: View {
 
                 Divider().overlay(Color.white.opacity(0.12))
 
+                Picker("Scan Route", selection: binding(\.scanRoute)) {
+                    Text("Auto Hybrid").tag(0)
+                    Text("Guide Lock").tag(1)
+                    Text("Ball Geometry").tag(2)
+                    Text("Corner Lock").tag(3)
+                }
+                .pickerStyle(.menu)
+
+                Text(scanRouteHelp)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Picker("Prediction Style", selection: binding(\.predictionStyle)) {
+                    Text("Simple").tag(0)
+                    Text("Advanced").tag(1)
+                    Text("Pro Video").tag(2)
+                }
+                .pickerStyle(.segmented)
+
+                Text(predictionStyleHelp)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Line Length")
@@ -266,6 +419,18 @@ struct ContentView: View {
                             .foregroundStyle(Color(red: 0.15, green: 0.84, blue: 1.0))
                     }
                     Slider(value: binding(\.lineLength), in: 0.25...1.0)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Hold Scan Result")
+                        Spacer()
+                        Text("\(Int(store.settings.holdScanSeconds))s")
+                            .foregroundStyle(Color(red: 0.15, green: 0.84, blue: 1.0))
+                    }
+                    Slider(value: binding(\.holdScanSeconds), in: 2...20, step: 1)
+                        .disabled(!store.settings.holdScanResult)
+                        .opacity(store.settings.holdScanResult ? 1 : 0.42)
                 }
 
                 Stepper(value: binding(\.maxBounces), in: 0...6) {
@@ -432,20 +597,39 @@ struct ContentView: View {
             set: { newValue in
                 store.settings[keyPath: keyPath] = newValue
                 store.save()
+                pipPreview.renderNow()
+                refreshLatestState()
             }
         )
+    }
+
+    private func setScanner(enabled: Bool) {
+        store.settings.scannerEnabled = enabled
+        if !enabled {
+            store.settings.holdScanResult = true
+        }
+        store.save()
+        UIImpactFeedbackGenerator(style: enabled ? .medium : .light).impactOccurred()
+        pipPreview.renderNow()
+        refreshLatestState()
     }
 
     private func refreshLatestState() {
         let url = ZGShared.sharedContainerURL().appendingPathComponent("zg_overlay_state.json")
         let replayURL = ZGShared.sharedContainerURL().appendingPathComponent("ZGAnnotatedReplay.mov")
         let previewURL = ZGShared.sharedContainerURL().appendingPathComponent("ZGPreviewFrame.jpg")
+        let pasteboardOverlayData = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardOverlayKey)
+        let pasteboardPreviewData = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardPreviewKey)
+        let pasteboardPreviewTimestamp = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardPreviewTimestampKey)
         annotatedReplayURL = FileManager.default.fileExists(atPath: replayURL.path) ? replayURL : nil
 
         let defaults = ZGShared.sharedDefaults()
         let timestamp = defaults.double(forKey: "broadcastLastEvent")
         let diagnostics = [
             "App Group Ready: \(ZGShared.appGroupReady ? "YES" : "NO")",
+            "Scanner Setting: \(store.settings.scannerEnabled ? "running" : "stopped / holding")",
+            "Scan Route: \(scanRouteName(store.settings.scanRoute))",
+            "Prediction Style: \(predictionStyleName(store.settings.predictionStyle))",
             "Broadcast Status: \(defaults.string(forKey: "broadcastStatus") ?? "not started")",
             "Detected Scene: \(defaults.string(forKey: "broadcastScene") ?? "unknown")",
             "Table Confidence: \(String(format: "%.2f", defaults.double(forKey: "broadcastTableConfidence")))",
@@ -453,7 +637,8 @@ struct ContentView: View {
             "Detected Balls: \(defaults.integer(forKey: "broadcastDetectedBalls"))",
             "Prediction Lines: \(defaults.integer(forKey: "broadcastLineCount"))",
             "Writer Status: \(defaults.string(forKey: "broadcastWriterStatus") ?? "not recording")",
-            "Live Preview Frame: \(FileManager.default.fileExists(atPath: previewURL.path) ? "ready" : "not available")",
+            "Fallback Bridge: \(ZGShared.sharedPasteboard == nil ? "not available" : "ready")",
+            "Live Preview Frame: \(previewFrameStatus(fileURL: previewURL, pasteboardData: pasteboardPreviewData, timestampData: pasteboardPreviewTimestamp))",
             "Replay File: \(annotatedReplayURL == nil ? "not available" : "ready to share")",
             "Last Event: \(format(timestamp: timestamp))"
         ].joined(separator: "\n")
@@ -463,8 +648,73 @@ struct ContentView: View {
 
         if let text = try? String(contentsOf: url, encoding: .utf8) {
             latestState = diagnostics + errorText + "\n\nLatest Overlay JSON:\n" + text
+        } else if let pasteboardOverlayData,
+                  let text = String(data: pasteboardOverlayData, encoding: .utf8) {
+            latestState = diagnostics + errorText + "\n\nLatest Overlay JSON via fallback bridge:\n" + text
         } else {
             latestState = diagnostics + errorText + "\n\nNo analyzer state yet.\nStart a broadcast, switch to the game/testing screen, stop it, then refresh."
+        }
+    }
+
+    private func previewFrameStatus(fileURL: URL, pasteboardData: Data?, timestampData: Data?) -> String {
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            return "ready via App Group"
+        }
+        if let pasteboardData, !pasteboardData.isEmpty {
+            guard let timestampData,
+                  let text = String(data: timestampData, encoding: .utf8),
+                  let timestamp = Double(text) else {
+            return "fallback bridge has frame, missing timestamp"
+            }
+            let age = Date().timeIntervalSince1970 - timestamp
+            return age < previewHoldSeconds() ? "ready via fallback bridge" : "stale fallback frame"
+        }
+        return "not available"
+    }
+
+    private func previewHoldSeconds() -> Double {
+        guard store.settings.holdScanResult else { return 1.0 }
+        return min(30.0, max(2.0, store.settings.holdScanSeconds))
+    }
+
+    private var scanRouteHelp: String {
+        switch store.settings.scanRoute {
+        case 1:
+            return "Guide Lock reads the visible in-game aim guide first. Fastest when the guide line is visible."
+        case 2:
+            return "Ball Geometry finds cue/object balls and draws ghost-ball/pocket paths without relying on the guide line."
+        case 3:
+            return "Corner Lock uses the detected table and pockets for a steady fallback when balls or guide lines are unclear."
+        default:
+            return "Auto Hybrid tries guide line, then ball geometry, then corner/pocket fallback."
+        }
+    }
+
+    private func scanRouteName(_ route: Int) -> String {
+        switch route {
+        case 1: return "Guide Lock"
+        case 2: return "Ball Geometry"
+        case 3: return "Corner Lock"
+        default: return "Auto Hybrid"
+        }
+    }
+
+    private var predictionStyleHelp: String {
+        switch store.settings.predictionStyle {
+        case 0:
+            return "Simple draws the clean core aim line with minimal CPU use."
+        case 2:
+            return "Pro Video adds glow lines, ghost-ball rings, pocket locks, bank hints, and after-hit guides."
+        default:
+            return "Advanced balances speed and detail with ghost ball, pocket line, bounces, and detected balls."
+        }
+    }
+
+    private func predictionStyleName(_ style: Int) -> String {
+        switch style {
+        case 0: return "Simple"
+        case 2: return "Pro Video"
+        default: return "Advanced"
         }
     }
 
@@ -473,6 +723,9 @@ struct ContentView: View {
         for filename in ["zg_overlay_state.json", "ZGAnnotatedReplay.mov", "ZGPreviewFrame.jpg"] {
             try? FileManager.default.removeItem(at: container.appendingPathComponent(filename))
         }
+        ZGShared.sharedPasteboard?.setData(Data(), forPasteboardType: ZGShared.pasteboardOverlayKey)
+        ZGShared.sharedPasteboard?.setData(Data(), forPasteboardType: ZGShared.pasteboardPreviewKey)
+        ZGShared.sharedPasteboard?.setData(Data(), forPasteboardType: ZGShared.pasteboardPreviewTimestampKey)
 
         let defaults = ZGShared.sharedDefaults()
         for key in [

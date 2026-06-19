@@ -7,6 +7,8 @@ Make the blue button act like a screen recording / screen sharing function, simi
 ## Implemented
 
 - Added animated **Created by ZG** entry screen with private code `777`.
+- Rebuilt the app into three pages: **Live**, **Assist**, and **Status**.
+- Added feature tiles for live scanner state, scan route, prediction style, and hold window.
 - Added bubble-style ZG branding for a less plain visual design.
 - Replaced small picker square with a full-width visible button.
 - The visible button says **START SCREEN RECORDING**.
@@ -14,6 +16,12 @@ Make the blue button act like a screen recording / screen sharing function, simi
 - Added Floating Preview using `AVPictureInPictureController` and `AVSampleBufferDisplayLayer`.
 - Fixed Floating Preview video buffer orientation so text should no longer render upside down.
 - Made the app interface darker and added bottom credit `created by zav G`.
+- Added **START SCANNER** and **STOP / HOLD** buttons.
+- Added hold-last-scan timing so the latest prediction remains visible while moving the PiP window.
+- Added PiP play/pause support for scanner resume/hold.
+- Added four scan routes: Auto Hybrid, Guide Lock, Ball Geometry, Corner Lock.
+- Added three prediction styles: Simple, Advanced, Pro Video.
+- Added Pro Video visual layers: glow strokes, pocket locks, ghost-ball ring, bank hints, and after-hit guides.
 - Made Direct ZG recorder mode default ON and surfaced it in the Screen Recording card.
 - Added installed-extension diagnostics so the app can report whether the broadcast `.appex` is actually embedded.
 - Added scene classification (`gameplay_table`, `partial_table_or_transition`, `lobby_menu`) and table confidence.
@@ -29,6 +37,10 @@ Make the blue button act like a screen recording / screen sharing function, simi
 - Added full GitHub/Codemagic upload and signing instructions.
 - Improved instructions inside the app.
 
-## Reason for default non-direct mode
+## Direct mode note
 
-Phone signing tools sometimes change bundle identifiers. If the app hardcodes the extension id and the signer changes it, the picker may do nothing. V3 defaults to Apple's chooser so the user can select the installed extension manually.
+Direct ZG recorder mode is ON by default so the blue button targets `Z G Overlay Record`. If tapping does nothing after signing, turn Direct mode OFF in Status/Diagnostics to show Apple's full chooser and confirm whether the extension is installed.
+
+## Launch-together note
+
+The supported near-in-game workflow is ReplayKit broadcast + PiP. A separate normal iOS app cannot silently inject a private overlay into another app. Once the original Cocos2d-x source is recovered, the best final version is a native in-game HUD layer using the same prediction logic.

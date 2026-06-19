@@ -153,6 +153,14 @@ Z G Overlay Record
 7. Switch to your own pool/test screen.
 8. Return to the app and check Analyzer State.
 
+The app now has three pages:
+
+```text
+Live   - recording, scanner start/hold, floating preview
+Assist - scan route, prediction style, line/bounce/pocket settings
+Status - analyzer state, signing diagnostics, iOS limits
+```
+
 You should see broadcast status, processed frames, detected balls, prediction line count, writer status, and replay availability.
 
 For the floating preview to show the actual game screen, these must become true after broadcast starts:
@@ -182,6 +190,31 @@ Expected behavior:
 - if the in-game white cue guide is visible, the first prediction follows that guide
 - if the cue guide is not visible, the analyzer falls back to ball/pocket geometry
 
+## 5A. Assist mode test matrix
+
+Open the **Assist** page and test these in order:
+
+```text
+1. Auto Hybrid + Advanced
+   Best default for normal use.
+
+2. Guide Lock + Simple
+   Fastest route when the white in-game aim guide is clearly visible.
+
+3. Ball Geometry + Advanced
+   Best route when the game guide is hidden or unreliable.
+
+4. Corner Lock + Pro Video
+   Best fallback for checking table/pocket lock and visual style.
+
+5. Auto Hybrid + Pro Video
+   Most complete look: glow lines, ghost-ball ring, pocket lock, bank hints.
+```
+
+Use **STOP / HOLD** when the prediction is correct. The preview keeps the last scan visible for the **Hold Scan Result** seconds, so you can move the floating window aside and read it.
+
+PiP play/pause can also resume or hold the scanner while you are outside the app.
+
 ## 6. Floating preview test
 
 The Floating Preview uses Apple's Picture-in-Picture system. It is a small floating video-style window, like YouTube PiP. It is not a private transparent overlay.
@@ -207,6 +240,26 @@ zg_overlay_state.json
 ```
 
 from the App Group and renders the latest scanned table, prediction lines, detected balls, and pocket marker.
+
+## 6A. Launch-together workflow
+
+iOS does not support a normal app silently launching as a private overlay on top of another app. Use one of these safe routes:
+
+```text
+Route A - Manual:
+Open Z G Replay Overlay, start broadcast, start floating preview, switch to the game.
+
+Route B - Shortcut:
+Create an iOS Shortcut:
+1. Open App: Z G Replay Overlay
+2. Wait 2 seconds
+3. Open App: your game
+
+Start the broadcast/PiP before the shortcut opens the game.
+
+Route C - Native later:
+When source code is recovered, add the same prediction HUD directly as a Cocos2d-x layer in your game.
+```
 
 ## 7. What changed for PiP
 

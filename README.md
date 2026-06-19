@@ -5,12 +5,20 @@ This version changes the old small blue broadcast square into a **WhatsApp-style
 ## What changed in V3
 
 - Animated entry screen with private code `777`.
+- Three-page app layout: **Live**, **Assist**, and **Status**.
+- Live feature tiles show Scanner, Scan Route, Prediction Style, and Hold Window.
 - Bubble-style ZG branding on the entry screen and header.
 - Big full-width **START SCREEN RECORDING** button.
 - Reworked the ReplayKit picker hit area so the full blue button opens Apple's broadcast UI.
 - Added **Floating Preview** using Apple's Picture-in-Picture system.
+- Added **START SCANNER** and **STOP / HOLD** controls.
+- Added hold-last-scan behavior so a good prediction stays visible while moving the floating window.
+- Added PiP play/pause control support for scanner resume/hold.
+- Added scan routes: **Auto Hybrid**, **Guide Lock**, **Ball Geometry**, and **Corner Lock**.
+- Added prediction styles: **Simple**, **Advanced**, and **Pro Video**.
 - Added scene classification so lobby/menu frames do not get prediction lines.
 - Improved gameplay-table detection using green cloth, six-pocket geometry, and table confidence.
+- Added stable table locking to reduce line jitter.
 - Added visible aim-guide detection for simpler, cleaner prediction lines.
 - Added live annotated preview frames from the broadcast extension so PiP can show the captured game screen, not only synthetic JSON lines.
 - Uses Apple's ReplayKit broadcast sheet, the same user-approved style used by screen sharing apps.
@@ -115,6 +123,52 @@ AVPictureInPictureController + AVSampleBufferDisplayLayer
 ```
 
 It can float like a small YouTube-style PiP window while you switch apps. It cannot become a private transparent, touch-through overlay on top of another app. It shows the latest scanned prediction output from the App Group JSON.
+
+## Assist Modes
+
+Open the **Assist** page and test these combinations:
+
+```text
+Scan Route:
+1. Auto Hybrid - tries guide line, then ball geometry, then corner/pocket fallback
+2. Guide Lock - fastest when the visible in-game guide line is on screen
+3. Ball Geometry - uses detected cue/object balls and ghost-ball math
+4. Corner Lock - steady fallback using detected table and pocket geometry
+
+Prediction Style:
+1. Simple - clean main aim line, fastest
+2. Advanced - ghost ball, pocket line, bounces, detected balls
+3. Pro Video - glow lines, pocket locks, bank hints, after-hit guides, stronger markers
+```
+
+For fastest testing, start with:
+
+```text
+Fast Scan Mode: ON
+Scan Route: Auto Hybrid
+Prediction Style: Advanced
+Hold Last Scan: ON
+Hold Scan Result: 8s
+```
+
+When a useful prediction appears, use **STOP / HOLD** or the PiP pause control. The last scanned result remains visible for the hold window.
+
+## Launch-together options
+
+iOS does not allow a separate normal app to inject a private overlay into another app or silently draw above it. The supported options are:
+
+```text
+Route A - Current app:
+ReplayKit broadcast + PiP floating preview.
+
+Route B - Shortcut flow:
+Create an iOS Shortcut that opens Z G Replay Overlay first, then opens your game after you start PiP.
+
+Route C - Native source-code integration:
+When you recover the Cocos2d-x source, add the prediction HUD as a Cocos2d-x layer inside the game itself.
+```
+
+Route C is the only way to make it behave exactly like an in-game overlay without relying on PiP.
 
 ## iOS rule
 

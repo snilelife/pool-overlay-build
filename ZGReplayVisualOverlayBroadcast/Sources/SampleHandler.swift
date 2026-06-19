@@ -5,6 +5,7 @@ import CoreMedia
 import Foundation
 import ImageIO
 import ReplayKit
+import UIKit
 import UniformTypeIdentifiers
 
 final class SampleHandler: RPBroadcastSampleHandler {
@@ -24,6 +25,9 @@ final class SampleHandler: RPBroadcastSampleHandler {
         lastWriterError = nil
         try? FileManager.default.removeItem(at: Shared.containerURL.appendingPathComponent("ZGAnnotatedReplay.mov"))
         try? FileManager.default.removeItem(at: Shared.containerURL.appendingPathComponent("ZGPreviewFrame.jpg"))
+        Shared.pasteboard?.setData(Data(), forPasteboardType: Shared.pasteboardOverlayKey)
+        Shared.pasteboard?.setData(Data(), forPasteboardType: Shared.pasteboardPreviewKey)
+        Shared.pasteboard?.setData(Data(), forPasteboardType: Shared.pasteboardPreviewTimestampKey)
         writeState(OverlayModel.empty(note: "broadcast started"), status: "started")
     }
 
@@ -46,17 +50,51 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
         frameCount += 1
         let settings = BroadcastSettings.load()
-        let overlay: OverlayModel
+        var overlay: OverlayModel
 
-        // Keep extension CPU safer: analyze about 5 times/second on a 60fps stream.
-        if frameCount == 1 || frameCount % 12 == 0 || lastOverlay == nil {
-            overlay = analyzer.makeOverlay(from: sampleBuffer, settings: settings)
-            lastOverlay = overlay
+        if !settings.scannerEnabled {
+            if frameCount == 1 || frameCount % 30 == 0 {
+                var stopped = lastOverlay ?? OverlayModel.empty(note: "scanner stopped")
+                stopped.timestamp = Date().timeIntervalSince1970
+                stopped.note = settings.holdScanResult ? "scanner stopped - holding last scan" : "scanner stopped"
+                stopped.scene = stopped.table.width > 0 ? "scan_paused" : "scanner_stopped"
+                writeState(stopped, status: "scanner stopped")
+                if !settings.holdScanResult {
+                    previewWriter.write(sampleBuffer, overlay: .empty(note: "scanner stopped"), minimumInterval: 0.25)
+                }
+            }
+            return
+        }
+
+        // Fast mode scans about 15 times/second on a 60fps stream while the live preview keeps flowing.
+        let analysisInterval: Int
+        if settings.predictionStyle >= 2 {
+            analysisInterval = settings.fastScanMode ? 5 : 12
+        } else if settings.predictionStyle == 0 {
+            analysisInterval = settings.fastScanMode ? 3 : 8
+        } else {
+            analysisInterval = settings.fastScanMode ? 4 : 10
+        }
+        if frameCount == 1 || frameCount % analysisInterval == 0 || lastOverlay == nil {
+            let analyzed = analyzer.makeOverlay(from: sampleBuffer, settings: settings)
+            if shouldHoldLastGameplayOverlay(insteadOf: analyzed, settings: settings), var held = lastOverlay {
+                held.timestamp = Date().timeIntervalSince1970
+                held.note = "holding last gameplay scan while screen is changing"
+                overlay = held
+            } else {
+                overlay = analyzed
+                lastOverlay = overlay
+            }
             writeState(overlay, status: "running")
-            previewWriter.write(sampleBuffer, overlay: settings.predictionEnabled ? overlay : .empty(note: "prediction disabled"))
         } else {
             overlay = lastOverlay ?? analyzer.makeOverlay(from: sampleBuffer, settings: settings)
         }
+
+        previewWriter.write(
+            sampleBuffer,
+            overlay: settings.predictionEnabled ? overlay : .empty(note: "prediction disabled"),
+            minimumInterval: settings.fastScanMode ? 0.10 : 0.20
+        )
 
         guard settings.recordAnnotatedVideo else { return }
 
@@ -83,10 +121,21 @@ final class SampleHandler: RPBroadcastSampleHandler {
         }
     }
 
+    private func shouldHoldLastGameplayOverlay(insteadOf overlay: OverlayModel, settings: BroadcastSettings) -> Bool {
+        guard settings.holdScanResult,
+              overlay.scene != "gameplay_table",
+              let previous = lastOverlay,
+              previous.scene == "gameplay_table",
+              previous.table.width > 0,
+              previous.table.height > 0 else { return false }
+        return Date().timeIntervalSince1970 - previous.timestamp <= settings.clampedHoldSeconds
+    }
+
     private func writeState(_ overlay: OverlayModel, status: String) {
         let url = Shared.containerURL.appendingPathComponent("zg_overlay_state.json")
         guard let data = try? JSONEncoder.pretty.encode(overlay) else { return }
         try? data.write(to: url, options: .atomic)
+        Shared.pasteboard?.setData(data, forPasteboardType: Shared.pasteboardOverlayKey)
         writeDiagnostics(status: status, overlay: overlay)
     }
 
@@ -118,6 +167,10 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
 private enum Shared {
     static let appGroupID = "group.com.snilelife.zgreplayvisualoverlay"
+    static let pasteboardName = "com.snilelife.zgreplayvisualoverlay.shared"
+    static let pasteboardOverlayKey = "zg_overlay_state_json"
+    static let pasteboardPreviewKey = "zg_preview_frame_jpeg"
+    static let pasteboardPreviewTimestampKey = "zg_preview_frame_timestamp"
 
     static var containerURL: URL {
         if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
@@ -129,9 +182,15 @@ private enum Shared {
     static var defaults: UserDefaults {
         UserDefaults(suiteName: appGroupID) ?? .standard
     }
+
+    static var pasteboard: UIPasteboard? {
+        UIPasteboard(name: UIPasteboard.Name(pasteboardName), create: true)
+    }
 }
 
 private struct BroadcastSettings {
+    var scannerEnabled: Bool
+    var holdScanResult: Bool
     var predictionEnabled: Bool
     var keepLine: Bool
     var manualPocket: Bool
@@ -139,14 +198,24 @@ private struct BroadcastSettings {
     var recordAnnotatedVideo: Bool
     var showDetectedBalls: Bool
     var showGhostBall: Bool
+    var fastScanMode: Bool
     var lineLength: Double
+    var holdScanSeconds: Double
     var maxBounces: Int
     var selectedPocket: Int
+    var scanRoute: Int
+    var predictionStyle: Int
+
+    var clampedHoldSeconds: Double {
+        min(30.0, max(2.0, holdScanSeconds))
+    }
 
     static func load() -> BroadcastSettings {
         let defaults = Shared.defaults
         let hasSavedSettings = defaults.object(forKey: "predictionEnabled") != nil
         return BroadcastSettings(
+            scannerEnabled: defaults.object(forKey: "scannerEnabled") == nil ? true : defaults.bool(forKey: "scannerEnabled"),
+            holdScanResult: defaults.object(forKey: "holdScanResult") == nil ? true : defaults.bool(forKey: "holdScanResult"),
             predictionEnabled: hasSavedSettings ? defaults.bool(forKey: "predictionEnabled") : true,
             keepLine: hasSavedSettings ? defaults.bool(forKey: "keepLine") : true,
             manualPocket: defaults.bool(forKey: "manualPocket"),
@@ -154,9 +223,13 @@ private struct BroadcastSettings {
             recordAnnotatedVideo: hasSavedSettings ? defaults.bool(forKey: "recordAnnotatedVideo") : true,
             showDetectedBalls: hasSavedSettings ? defaults.bool(forKey: "showDetectedBalls") : true,
             showGhostBall: hasSavedSettings ? defaults.bool(forKey: "showGhostBall") : true,
+            fastScanMode: defaults.object(forKey: "fastScanMode") == nil ? true : defaults.bool(forKey: "fastScanMode"),
             lineLength: defaults.object(forKey: "lineLength") as? Double ?? 0.86,
+            holdScanSeconds: defaults.object(forKey: "holdScanSeconds") as? Double ?? 8.0,
             maxBounces: defaults.object(forKey: "maxBounces") as? Int ?? 3,
-            selectedPocket: defaults.object(forKey: "selectedPocket") as? Int ?? 1
+            selectedPocket: defaults.object(forKey: "selectedPocket") as? Int ?? 1,
+            scanRoute: defaults.object(forKey: "scanRoute") as? Int ?? 0,
+            predictionStyle: defaults.object(forKey: "predictionStyle") as? Int ?? 1
         )
     }
 }
@@ -216,7 +289,7 @@ private struct TableDetection {
     var pocketHits: Int
 
     var isGameplay: Bool {
-        scene == "gameplay_table" && confidence >= 0.58 && pocketHits >= 4
+        scene == "gameplay_table" && confidence >= 0.54 && pocketHits >= 3
     }
 }
 
@@ -236,6 +309,7 @@ private struct Accum {
 
 private final class FrameAnalyzer {
     private let ciContext = CIContext(options: nil)
+    private var stableTable: CGRect?
 
     func makeOverlay(from sampleBuffer: CMSampleBuffer, settings: BroadcastSettings) -> OverlayModel {
         guard let sourceBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -247,6 +321,7 @@ private final class FrameAnalyzer {
         let height = Double(CVPixelBufferGetHeight(analysisBuffer))
         let tableDetection = detectTable(in: analysisBuffer, width: width, height: height)
         let table = tableDetection.rect
+        let route = max(0, min(settings.scanRoute, 3))
 
         guard tableDetection.isGameplay else {
             return OverlayModel(
@@ -266,69 +341,109 @@ private final class FrameAnalyzer {
         let balls = findBallCandidates(in: analysisBuffer, table: table, cue: cue)
         let pockets = pocketPoints(table: table)
         let pocketIndex = max(0, min(settings.selectedPocket, pockets.count - 1))
-        let choice = chooseShot(cue: cue, balls: balls, pockets: pockets, settings: settings)
-        let aimPath = findAimPath(in: analysisBuffer, cue: cue, table: table, maxBounces: settings.maxBounces)
+        let choice = route == 1 || route == 3 ? nil : chooseShot(cue: cue, balls: balls, pockets: pockets, settings: settings)
+        let aimPath = route == 2 || route == 3 ? [] : findAimPath(in: analysisBuffer, cue: cue, table: table, maxBounces: settings.maxBounces)
+        let style = max(0, min(settings.predictionStyle, 2))
 
         var lines: [OverlayLine] = []
         var circles: [OverlayCircle] = []
         let ballRadius = max(8.0, table.width * 0.018)
 
         if settings.predictionEnabled {
+            if style >= 2 {
+                for pocket in pockets {
+                    circles.append(circle(pocket, radius: max(10, table.width * 0.016), color: (0.08, 0.95, 1.0, 0.46), width: 2.0))
+                }
+            }
+
             if aimPath.count >= 2 {
                 for index in 0..<max(0, aimPath.count - 1) {
-                    lines.append(line(aimPath[index], aimPath[index + 1], color: index == 0 ? (1, 1, 1, 0.96) : (0.18, 0.88, 1.0, 0.74), width: index == 0 ? 3.4 : 2.2))
+                    addStyledLine(
+                        aimPath[index],
+                        aimPath[index + 1],
+                        color: index == 0 ? (1, 1, 1, 0.96) : (0.18, 0.88, 1.0, 0.74),
+                        width: index == 0 ? (style >= 2 ? 4.2 : style == 1 ? 3.4 : 2.7) : (style >= 2 ? 2.8 : 2.0),
+                        style: style,
+                        lines: &lines
+                    )
+                }
+
+                if style >= 2, let choice {
+                    addStyledLine(choice.object, choice.pocket, color: (0.12, 0.92, 1.0, 0.70), width: 2.4, style: style, lines: &lines)
+                    circles.append(circle(choice.ghost, radius: ballRadius, color: (1.0, 0.84, 0.10, 0.92), width: 2.6))
                 }
             } else if let choice {
-                lines.append(line(choice.cue, choice.ghost, color: (1, 1, 1, 0.94), width: 3.2))
-                lines.append(line(choice.object, choice.pocket, color: (0.10, 0.86, 1.0, 0.88), width: 2.6))
+                addStyledLine(choice.cue, choice.ghost, color: (1, 1, 1, 0.94), width: style >= 2 ? 4.0 : style == 1 ? 3.2 : 2.7, style: style, lines: &lines)
+                addStyledLine(choice.object, choice.pocket, color: (0.10, 0.86, 1.0, 0.88), width: style >= 2 ? 3.1 : 2.4, style: style, lines: &lines)
 
-                if settings.showGhostBall {
-                    circles.append(circle(choice.ghost, radius: ballRadius, color: (1.0, 0.84, 0.10, 0.96), width: 2.6))
+                if style >= 2 {
+                    addStyledLine(choice.ghost, choice.object, color: (1.0, 0.84, 0.10, 0.78), width: 2.0, style: style, lines: &lines)
                 }
 
-                let after = cueAfterHitPath(cue: choice.cue, ghost: choice.ghost, object: choice.object, table: table, count: settings.maxBounces)
-                for index in 0..<max(0, after.count - 1) {
-                    lines.append(line(after[index], after[index + 1], color: (0.70, 1.00, 0.12, 0.70), width: 2.0))
+                if settings.showGhostBall {
+                    circles.append(circle(choice.ghost, radius: ballRadius, color: (1.0, 0.84, 0.10, 0.96), width: style >= 2 ? 3.2 : 2.6))
+                    if style >= 2 {
+                        circles.append(circle(choice.object, radius: ballRadius * 1.18, color: (0.10, 0.86, 1.0, 0.66), width: 2.2))
+                    }
+                }
+
+                if style >= 1 {
+                    let after = cueAfterHitPath(cue: choice.cue, ghost: choice.ghost, object: choice.object, table: table, count: settings.maxBounces)
+                    for index in 0..<max(0, after.count - 1) {
+                        addStyledLine(after[index], after[index + 1], color: (0.70, 1.00, 0.12, 0.70), width: style >= 2 ? 2.5 : 2.0, style: style, lines: &lines)
+                    }
+                }
+
+                if style >= 2 {
+                    for guide in bankGuides(from: choice.object, to: choice.pocket, table: table).prefix(3) {
+                        guard guide.count == 3 else { continue }
+                        addStyledLine(guide[0], guide[1], color: (0.72, 0.40, 1.0, 0.36), width: 1.8, style: style, lines: &lines)
+                        addStyledLine(guide[1], guide[2], color: (0.72, 0.40, 1.0, 0.36), width: 1.8, style: style, lines: &lines)
+                    }
                 }
             } else {
                 let targetPocket = settings.manualPocket ? pockets[pocketIndex] : nearestPocket(to: cue, pockets: pockets)
                 let aimEnd = clamp(point(from: cue, toward: targetPocket, distance: hypot(table.width, table.height) * settings.lineLength), to: table)
-                lines.append(line(cue, aimEnd, color: (1, 1, 1, 0.92), width: 3.0))
-                lines.append(line(aimEnd, targetPocket, color: (0.15, 0.82, 1.0, 0.82), width: 2.4))
+                addStyledLine(cue, aimEnd, color: (1, 1, 1, 0.92), width: style >= 2 ? 3.8 : style == 1 ? 3.0 : 2.6, style: style, lines: &lines)
+                if style >= 1 {
+                    addStyledLine(aimEnd, targetPocket, color: (0.15, 0.82, 1.0, 0.82), width: style >= 2 ? 2.8 : 2.2, style: style, lines: &lines)
+                }
             }
 
             if settings.showSideLines {
-                lines.append(line(CGPoint(x: table.minX, y: table.midY), CGPoint(x: table.maxX, y: table.midY), color: (1.0, 0.86, 0.18, 0.20), width: 1.0))
-                lines.append(line(CGPoint(x: table.midX, y: table.minY), CGPoint(x: table.midX, y: table.maxY), color: (1.0, 0.86, 0.18, 0.20), width: 1.0))
+                let sideAlpha = style >= 2 ? 0.26 : 0.18
+                lines.append(line(CGPoint(x: table.minX, y: table.midY), CGPoint(x: table.maxX, y: table.midY), color: (1.0, 0.86, 0.18, sideAlpha), width: style >= 2 ? 1.4 : 1.0))
+                lines.append(line(CGPoint(x: table.midX, y: table.minY), CGPoint(x: table.midX, y: table.maxY), color: (1.0, 0.86, 0.18, sideAlpha), width: style >= 2 ? 1.4 : 1.0))
             }
 
-            if aimPath.isEmpty {
+            if aimPath.isEmpty && route != 1 && style >= 1 {
                 let bounceStart = choice?.cue ?? cue
                 let bounceTarget = choice?.pocket ?? pockets[pocketIndex]
                 let bounces = bouncePath(start: bounceStart, toward: bounceTarget, table: table, count: settings.maxBounces)
                 for index in 0..<max(0, bounces.count - 1) {
-                    lines.append(line(bounces[index], bounces[index + 1], color: (0.45, 0.40, 1.0, 0.50), width: 1.5))
+                    addStyledLine(bounces[index], bounces[index + 1], color: (0.45, 0.40, 1.0, style >= 2 ? 0.58 : 0.42), width: style >= 2 ? 1.9 : 1.5, style: style, lines: &lines)
                 }
             }
 
-            circles.append(circle(cue, radius: ballRadius, color: (1, 1, 1, 0.96), width: 2.8))
+            circles.append(circle(cue, radius: ballRadius, color: (1, 1, 1, 0.96), width: style >= 2 ? 3.6 : 2.8))
             let selected = choice?.pocket ?? pockets[pocketIndex]
-            circles.append(circle(selected, radius: max(13, table.width * 0.023), color: (0.1, 0.88, 1.0, 0.94), width: 3.0))
+            circles.append(circle(selected, radius: max(13, table.width * (style >= 2 ? 0.030 : 0.023)), color: (0.1, 0.88, 1.0, 0.94), width: style >= 2 ? 4.2 : 3.0))
 
             if settings.showDetectedBalls {
-                for ball in balls.prefix(10) {
-                    circles.append(circle(ball.center, radius: ball.radius, color: ball.isCueLike ? (1, 1, 1, 0.75) : (1.0, 0.20, 0.20, 0.62), width: 1.8))
+                let maxBallMarkers = style >= 2 ? 16 : style == 1 ? 10 : 6
+                for ball in balls.prefix(maxBallMarkers) {
+                    circles.append(circle(ball.center, radius: ball.radius, color: ball.isCueLike ? (1, 1, 1, 0.75) : (1.0, 0.20, 0.20, style >= 2 ? 0.70 : 0.54), width: style >= 2 ? 2.2 : 1.7))
                 }
             }
         }
 
         let note: String
         if !aimPath.isEmpty {
-            note = "scene=gameplay_table, aim guide=ok, balls=\(balls.count), confidence=\(String(format: "%.2f", tableDetection.confidence))"
+            note = "route=\(routeName(route)), style=\(styleName(style)), scene=gameplay_table, aim guide=ok, balls=\(balls.count), confidence=\(String(format: "%.2f", tableDetection.confidence))"
         } else if choice != nil {
-            note = "scene=gameplay_table, table=ok, balls=\(balls.count), shot candidate=ok, confidence=\(String(format: "%.2f", tableDetection.confidence))"
+            note = "route=\(routeName(route)), style=\(styleName(style)), scene=gameplay_table, table=ok, balls=\(balls.count), shot candidate=ok, confidence=\(String(format: "%.2f", tableDetection.confidence))"
         } else {
-            note = "scene=gameplay_table, fallback: table=ok, balls=\(balls.count), no strong object-ball candidate, confidence=\(String(format: "%.2f", tableDetection.confidence))"
+            note = "route=\(routeName(route)), style=\(styleName(style)), scene=gameplay_table, fallback: table=ok, balls=\(balls.count), confidence=\(String(format: "%.2f", tableDetection.confidence))"
         }
 
         return OverlayModel(
@@ -419,10 +534,11 @@ private final class FrameAnalyzer {
             pocketHits = countPocketHits(reader: reader, table: detected)
         }
         let pocketScore = Double(pocketHits) / 6.0
-        let confidence = clamp01(greenRatio * 2.25 + pocketScore * 0.46 + aspectScore * 0.24 + areaScore * 0.18)
+        var finalRect = detected
+        var confidence = clamp01(greenRatio * 2.25 + pocketScore * 0.46 + aspectScore * 0.24 + areaScore * 0.18)
 
-        let scene: String
-        if confidence >= 0.58 && pocketHits >= 4 {
+        var scene: String
+        if confidence >= 0.54 && pocketHits >= 3 && greenRatio > 0.10 {
             scene = "gameplay_table"
         } else if greenRatio > 0.08 || pocketHits >= 2 {
             scene = "partial_table_or_transition"
@@ -430,16 +546,43 @@ private final class FrameAnalyzer {
             scene = "lobby_menu"
         }
 
-        return TableDetection(rect: detected, scene: scene, confidence: confidence, greenHits: greenHits, sampledPixels: sampledPixels, pocketHits: pocketHits)
+        if scene == "gameplay_table" {
+            if let stableTable, rectsAreClose(stableTable, finalRect, screen: screen) {
+                finalRect = blend(previous: stableTable, current: finalRect, currentWeight: 0.42)
+            }
+            stableTable = finalRect
+        } else if let stableTable, scene == "partial_table_or_transition" {
+            finalRect = stableTable
+            confidence = max(confidence, 0.50)
+        }
+
+        return TableDetection(rect: finalRect, scene: scene, confidence: confidence, greenHits: greenHits, sampledPixels: sampledPixels, pocketHits: pocketHits)
     }
 
     private func isGreenCloth(_ rgb: RGB) -> Bool {
-        rgb.green > 72 &&
-        rgb.green > rgb.red * 1.18 &&
-        rgb.green > rgb.blue * 1.08 &&
+        rgb.green > 64 &&
+        rgb.green > rgb.red * 1.12 &&
+        rgb.green > rgb.blue * 1.03 &&
         rgb.luma > 45 &&
-        rgb.luma < 190 &&
-        rgb.saturation > 34
+        rgb.luma < 205 &&
+        rgb.saturation > 28
+    }
+
+    private func rectsAreClose(_ a: CGRect, _ b: CGRect, screen: CGRect) -> Bool {
+        let screenDiagonal = hypot(screen.width, screen.height)
+        let centerDistance = hypot(a.midX - b.midX, a.midY - b.midY)
+        let sizeDelta = abs(a.width - b.width) + abs(a.height - b.height)
+        return centerDistance < screenDiagonal * 0.045 && sizeDelta < screenDiagonal * 0.11
+    }
+
+    private func blend(previous: CGRect, current: CGRect, currentWeight: CGFloat) -> CGRect {
+        let oldWeight = 1.0 - currentWeight
+        return CGRect(
+            x: previous.minX * oldWeight + current.minX * currentWeight,
+            y: previous.minY * oldWeight + current.minY * currentWeight,
+            width: previous.width * oldWeight + current.width * currentWeight,
+            height: previous.height * oldWeight + current.height * currentWeight
+        )
     }
 
     private func countPocketHits(reader: PixelReader, table: CGRect) -> Int {
@@ -472,6 +615,95 @@ private final class FrameAnalyzer {
 
     private func clamp01(_ value: Double) -> Double {
         min(1.0, max(0.0, value))
+    }
+
+    private func routeName(_ route: Int) -> String {
+        switch route {
+        case 1: return "guide_lock"
+        case 2: return "ball_geometry"
+        case 3: return "corner_lock"
+        default: return "auto_hybrid"
+        }
+    }
+
+    private func styleName(_ style: Int) -> String {
+        switch style {
+        case 0: return "simple"
+        case 2: return "pro_video"
+        default: return "advanced"
+        }
+    }
+
+    private func addStyledLine(
+        _ start: CGPoint,
+        _ end: CGPoint,
+        color: (Double, Double, Double, Double),
+        width: Double,
+        style: Int,
+        lines: inout [OverlayLine]
+    ) {
+        if style >= 2 {
+            lines.append(line(start, end, color: (color.0, color.1, color.2, color.3 * 0.20), width: width * 3.1))
+            lines.append(line(start, end, color: (color.0, color.1, color.2, color.3 * 0.34), width: width * 1.85))
+        }
+        lines.append(line(start, end, color: color, width: width))
+    }
+
+    private func bankGuides(from object: CGPoint, to pocket: CGPoint, table: CGRect) -> [[CGPoint]] {
+        var guides: [[CGPoint]] = []
+        if let top = railGuide(from: object, to: pocket, rail: .top, table: table) { guides.append(top) }
+        if let bottom = railGuide(from: object, to: pocket, rail: .bottom, table: table) { guides.append(bottom) }
+        if let left = railGuide(from: object, to: pocket, rail: .left, table: table) { guides.append(left) }
+        if let right = railGuide(from: object, to: pocket, rail: .right, table: table) { guides.append(right) }
+
+        return guides.sorted {
+            guideLength($0) < guideLength($1)
+        }
+    }
+
+    private enum Rail { case top, bottom, left, right }
+
+    private func railGuide(from object: CGPoint, to pocket: CGPoint, rail: Rail, table: CGRect) -> [CGPoint]? {
+        let mirror: CGPoint
+        switch rail {
+        case .top:
+            mirror = CGPoint(x: pocket.x, y: table.minY * 2 - pocket.y)
+        case .bottom:
+            mirror = CGPoint(x: pocket.x, y: table.maxY * 2 - pocket.y)
+        case .left:
+            mirror = CGPoint(x: table.minX * 2 - pocket.x, y: pocket.y)
+        case .right:
+            mirror = CGPoint(x: table.maxX * 2 - pocket.x, y: pocket.y)
+        }
+
+        let dx = mirror.x - object.x
+        let dy = mirror.y - object.y
+        let t: CGFloat
+        switch rail {
+        case .top:
+            guard abs(dy) > 0.001 else { return nil }
+            t = (table.minY - object.y) / dy
+        case .bottom:
+            guard abs(dy) > 0.001 else { return nil }
+            t = (table.maxY - object.y) / dy
+        case .left:
+            guard abs(dx) > 0.001 else { return nil }
+            t = (table.minX - object.x) / dx
+        case .right:
+            guard abs(dx) > 0.001 else { return nil }
+            t = (table.maxX - object.x) / dx
+        }
+
+        guard t > 0.05 && t < 0.95 else { return nil }
+        let railPoint = CGPoint(x: object.x + dx * t, y: object.y + dy * t)
+        guard table.insetBy(dx: -2, dy: -2).contains(railPoint) else { return nil }
+        return [object, railPoint, pocket]
+    }
+
+    private func guideLength(_ guide: [CGPoint]) -> CGFloat {
+        guard guide.count == 3 else { return .greatestFiniteMagnitude }
+        return hypot(guide[1].x - guide[0].x, guide[1].y - guide[0].y) +
+            hypot(guide[2].x - guide[1].x, guide[2].y - guide[1].y)
     }
 
     private func findCueBall(in pixelBuffer: CVPixelBuffer, table: CGRect) -> CGPoint? {
@@ -831,8 +1063,8 @@ private final class PreviewFrameWriter {
     private let ciContext = CIContext()
     private var lastWrite = Date.distantPast
 
-    func write(_ sampleBuffer: CMSampleBuffer, overlay: OverlayModel) {
-        guard Date().timeIntervalSince(lastWrite) > 0.18,
+    func write(_ sampleBuffer: CMSampleBuffer, overlay: OverlayModel, minimumInterval: TimeInterval) {
+        guard Date().timeIntervalSince(lastWrite) > minimumInterval,
               let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastWrite = Date()
 
@@ -867,6 +1099,12 @@ private final class PreviewFrameWriter {
         guard CGImageDestinationFinalize(destination) else { return }
         try? FileManager.default.removeItem(at: outputURL)
         try? FileManager.default.moveItem(at: tempURL, to: outputURL)
+        if let data = try? Data(contentsOf: outputURL) {
+            Shared.pasteboard?.setData(data, forPasteboardType: Shared.pasteboardPreviewKey)
+            if let timestampData = "\(Date().timeIntervalSince1970)".data(using: .utf8) {
+                Shared.pasteboard?.setData(timestampData, forPasteboardType: Shared.pasteboardPreviewTimestampKey)
+            }
+        }
     }
 }
 

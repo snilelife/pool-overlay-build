@@ -110,7 +110,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
     private func startRendering() {
         timer?.invalidate()
         renderNow()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
             self?.renderNow()
         }
         if let timer {
@@ -158,7 +158,13 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
 
     private func loadLatestOverlay() -> PiPOverlayModel? {
         let url = ZGShared.sharedContainerURL().appendingPathComponent("zg_overlay_state.json")
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        let data: Data?
+        if let fileData = try? Data(contentsOf: url) {
+            data = fileData
+        } else {
+            data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardOverlayKey)
+        }
+        guard let data else { return nil }
         return try? JSONDecoder().decode(PiPOverlayModel.self, from: data)
     }
 
@@ -227,9 +233,39 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
 
     private func loadLatestPreviewImage() -> CGImage? {
         let url = ZGShared.sharedContainerURL().appendingPathComponent("ZGPreviewFrame.jpg")
-        guard FileManager.default.fileExists(atPath: url.path),
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        if filePreviewIsFresh(url),
+           let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            return image
+        }
+
+        guard fallbackPreviewIsFresh(),
+              let data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardPreviewKey) as CFData?,
+              let source = CGImageSourceCreateWithData(data, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
+    private func fallbackPreviewIsFresh() -> Bool {
+        guard let data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardPreviewTimestampKey),
+              let text = String(data: data, encoding: .utf8),
+              let timestamp = Double(text) else { return false }
+        return Date().timeIntervalSince1970 - timestamp < previewHoldSeconds()
+    }
+
+    private func filePreviewIsFresh(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modifiedAt = attributes[.modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(modifiedAt) < previewHoldSeconds()
+    }
+
+    private func previewHoldSeconds() -> Double {
+        let defaults = ZGShared.sharedDefaults()
+        if defaults.object(forKey: "holdScanResult") != nil, defaults.bool(forKey: "holdScanResult") == false {
+            return 1.0
+        }
+        let stored = defaults.double(forKey: "holdScanSeconds")
+        return min(30.0, max(2.0, stored > 0 ? stored : 8.0))
     }
 
     private func draw(image: CGImage, in rect: CGRect) {
@@ -246,11 +282,11 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
     }
 
     private func drawLiveBadge(in rect: CGRect, overlay: PiPOverlayModel?) {
-        let badge = CGRect(x: 18, y: 16, width: 214, height: 46)
+        let badge = CGRect(x: 18, y: 16, width: 250, height: 46)
         UIColor.black.withAlphaComponent(0.68).setFill()
         UIBezierPath(roundedRect: badge, cornerRadius: 16).fill()
 
-        let label = overlay.map { "\($0.scene.uppercased()) \(Int($0.tableConfidence * 100))%" } ?? "LIVE SCAN"
+        let label = statusLabel(for: overlay)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .heavy),
             .foregroundColor: color(red: 0.18, green: 0.90, blue: 1.0, alpha: 1)
@@ -267,7 +303,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
 
         let state: String
         if let overlay {
-            state = "\(overlay.scene.uppercased())  \(Int(overlay.tableConfidence * 100))%"
+            state = statusLabel(for: overlay)
         } else {
             state = "WAITING FOR SCAN"
         }
@@ -278,6 +314,23 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
         NSString(string: state).draw(at: CGPoint(x: 34, y: 70), withAttributes: stateAttributes)
     }
 
+    private func statusLabel(for overlay: PiPOverlayModel?) -> String {
+        guard let overlay else { return "LIVE SCAN" }
+        if overlay.note.localizedCaseInsensitiveContains("holding") {
+            return "HOLD \(Int(overlay.tableConfidence * 100))%"
+        }
+        if overlay.scene == "scan_paused" || overlay.scene == "scanner_stopped" {
+            return "SCAN PAUSED"
+        }
+        if overlay.scene == "gameplay_table" {
+            return "TABLE \(Int(overlay.tableConfidence * 100))%"
+        }
+        if overlay.scene == "lobby_menu" {
+            return "LOBBY"
+        }
+        return "\(overlay.scene.uppercased()) \(Int(overlay.tableConfidence * 100))%"
+    }
+
     private func drawWaitingState(in rect: CGRect) {
         let box = CGRect(x: 120, y: 136, width: 720, height: 276)
         UIColor.white.withAlphaComponent(0.06).setFill()
@@ -285,7 +338,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
 
         let message = ZGShared.appGroupReady
             ? "Start a broadcast to feed live scan data into this floating preview."
-            : "App Group is not available. The recorder cannot send scan frames to this preview until signing keeps the App Group entitlement."
+            : "App Group is not available. Using fallback bridge; start a broadcast and wait for the first scanned frame."
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 24, weight: .bold),
             .foregroundColor: UIColor.white.withAlphaComponent(0.74),
@@ -405,7 +458,8 @@ extension PiPOverlayPreviewController: AVPictureInPictureControllerDelegate {
 
 extension PiPOverlayPreviewController: AVPictureInPictureSampleBufferPlaybackDelegate {
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, setPlaying playing: Bool) {
-        statusText = playing ? "Floating PiP preview active." : "PiP preview paused."
+        setScannerEnabledFromPiP(playing)
+        statusText = playing ? "PiP scanner resumed." : "PiP scanner paused; holding last scan."
         pictureInPictureController.invalidatePlaybackState()
     }
 
@@ -414,7 +468,7 @@ extension PiPOverlayPreviewController: AVPictureInPictureSampleBufferPlaybackDel
     }
 
     func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
-        false
+        !scannerEnabledFromDefaults()
     }
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
@@ -427,6 +481,36 @@ extension PiPOverlayPreviewController: AVPictureInPictureSampleBufferPlaybackDel
 
     func pictureInPictureControllerShouldProhibitBackgroundAudioPlayback(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
         true
+    }
+
+    private func scannerEnabledFromDefaults() -> Bool {
+        let defaults = ZGShared.sharedDefaults()
+        guard defaults.object(forKey: "scannerEnabled") != nil else { return true }
+        return defaults.bool(forKey: "scannerEnabled")
+    }
+
+    private func setScannerEnabledFromPiP(_ enabled: Bool) {
+        let defaults = ZGShared.sharedDefaults()
+        var settings: OverlaySettings
+        if let data = defaults.data(forKey: "ZGOverlaySettings"),
+           let decoded = try? JSONDecoder().decode(OverlaySettings.self, from: data) {
+            settings = decoded
+        } else {
+            settings = OverlaySettings()
+        }
+
+        settings.scannerEnabled = enabled
+        if !enabled {
+            settings.holdScanResult = true
+        }
+
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: "ZGOverlaySettings")
+        }
+        defaults.set(settings.scannerEnabled, forKey: "scannerEnabled")
+        defaults.set(settings.holdScanResult, forKey: "holdScanResult")
+        defaults.set(settings.holdScanSeconds, forKey: "holdScanSeconds")
+        defaults.synchronize()
     }
 }
 
