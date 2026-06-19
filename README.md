@@ -4,7 +4,7 @@ This version changes the old small blue broadcast square into a **WhatsApp-style
 
 ## What changed in V3
 
-- Animated entry screen with private code `777`.
+  - Animated entry screen with private code `‘‘‘.
 - Three-page app layout: **Live**, **Assist**, and **Status**.
 - Live feature tiles show Scanner, Scan Route, Prediction Style, and Hold Window.
 - Bubble-style ZG branding on the entry screen and header.
