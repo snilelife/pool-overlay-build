@@ -9,6 +9,9 @@ This version changes the old small blue broadcast square into a **WhatsApp-style
 - Big full-width **START SCREEN RECORDING** button.
 - Reworked the ReplayKit picker hit area so the full blue button opens Apple's broadcast UI.
 - Added **Floating Preview** using Apple's Picture-in-Picture system.
+- Added scene classification so lobby/menu frames do not get prediction lines.
+- Improved gameplay-table detection using green cloth, six-pocket geometry, and table confidence.
+- Added visible aim-guide detection for simpler, cleaner prediction lines.
 - Uses Apple's ReplayKit broadcast sheet, the same user-approved style used by screen sharing apps.
 - Default mode opens Apple's normal broadcast chooser, which is safer after phone signing.
 - Added optional microphone button toggle.
@@ -94,6 +97,13 @@ If the Apple broadcast sheet opens but the broadcast immediately stops after the
 - `Payload/ZGReplayVisualOverlay.app/PlugIns/ZGReplayVisualOverlayBroadcast.appex` must also be signed
 - both targets must preserve the same App Group entitlement
 - if your Apple developer account/profile shows a Broadcast Upload capability, enable it for the broadcast extension profile
+
+If the sheet shows Photos, ChatGPT, or Discord but not `Z G Overlay Record`, the iOS recording UI is opening correctly, but the broadcast extension is not installed/registered. In the app, check Broadcast Diagnostics:
+
+- `Embedded .appex in installed app` must be `YES`
+- `Embedded extension display name` must be `Z G Overlay Record`
+- `App Group available now` should be `YES`
+- if Direct mode is ON and the signer changed bundle IDs, turn Direct mode OFF and check the chooser
 
 ## Floating Preview
 

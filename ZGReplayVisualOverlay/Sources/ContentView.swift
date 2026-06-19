@@ -38,7 +38,11 @@ struct ContentView: View {
 
     private var appBackground: some View {
         LinearGradient(
-            colors: [Color(red: 0.035, green: 0.045, blue: 0.075), Color(red: 0.0, green: 0.075, blue: 0.095)],
+            colors: [
+                Color(red: 0.003, green: 0.006, blue: 0.012),
+                Color(red: 0.010, green: 0.018, blue: 0.030),
+                Color(red: 0.000, green: 0.040, blue: 0.052)
+            ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -55,6 +59,7 @@ struct ContentView: View {
                 analyzerCard
                 diagnosticsCard
                 limitCard
+                footerCredit
             }
             .padding(18)
             .frame(maxWidth: 760)
@@ -100,9 +105,13 @@ struct ContentView: View {
 
                 screenRecordStartButton
 
+                if !ZGShared.broadcastExtensionEmbedded {
+                    warningBox("Recorder extension not detected inside this installed app. If Z G Overlay Record is missing from Apple's sheet, your signer probably did not embed/sign the .appex.")
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
                     stepLine("1", "Tap START SCREEN RECORDING")
-                    stepLine("2", "Choose Z G Overlay Record in Apple’s broadcast sheet")
+                    stepLine("2", "Direct mode should open Z G Overlay Record. If not, turn Direct mode OFF and check the chooser.")
                     stepLine("3", "Tap Start Broadcast, then switch to your pool screen")
                     stepLine("4", "Stop from the red status bar / Dynamic Island / Control Center")
                 }
@@ -111,6 +120,10 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 Toggle("Show microphone option", isOn: binding(\.showMicrophoneButton))
+                    .tint(Color(red: 0.05, green: 0.62, blue: 1.0))
+                    .font(.system(size: 14, weight: .semibold))
+
+                Toggle("Direct ZG recorder mode", isOn: binding(\.directZGExtensionMode))
                     .tint(Color(red: 0.05, green: 0.62, blue: 1.0))
                     .font(.system(size: 14, weight: .semibold))
             }
@@ -327,7 +340,10 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 9) {
                 sectionTitle("Broadcast Diagnostics")
                 labelValue("Extension shown in Apple sheet", "Z G Overlay Record")
+                labelValue("Installed main app ID", ZGShared.mainBundleID)
                 labelValue("Expected Extension ID", ZGShared.extensionBundleID)
+                labelValue("Embedded .appex in installed app", ZGShared.broadcastExtensionEmbedded ? "YES" : "NO")
+                labelValue("Embedded extension display name", ZGShared.broadcastExtensionDisplayName)
                 labelValue("Shared App Group", ZGShared.appGroupID)
                 labelValue("App Group available now", ZGShared.appGroupReady ? "YES" : "NO / signer may need App Group entitlement")
                 labelValue("ReplayKit API path", "RPSystemBroadcastPickerView + RPBroadcastSampleHandler")
@@ -336,7 +352,7 @@ struct ContentView: View {
                     .tint(Color(red: 0.05, green: 0.62, blue: 1.0))
                     .font(.system(size: 14, weight: .semibold))
 
-                Text("Leave Direct mode OFF if you sign on phone. OFF opens Apple’s chooser, which is more reliable when the signer changes bundle IDs. If the extension does not appear, the .appex was not signed/embedded correctly.")
+                Text("Direct mode ON targets Z G Overlay Record directly. If tapping does nothing, turn Direct mode OFF and open Apple's chooser. If Z G Overlay Record is still missing, the .appex was not signed/embedded correctly.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.66))
             }
@@ -366,16 +382,43 @@ struct ContentView: View {
         }
     }
 
+    private func warningBox(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color(red: 1.0, green: 0.72, blue: 0.18))
+            Text(text)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white.opacity(0.82))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(Color(red: 0.30, green: 0.18, blue: 0.02).opacity(0.34))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(red: 1.0, green: 0.72, blue: 0.18).opacity(0.25), lineWidth: 1)
+        )
+    }
+
     private func panel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
             .padding(16)
             .frame(maxWidth: .infinity)
-            .background(Color.black.opacity(0.56))
+            .background(Color.black.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(Color.white.opacity(0.22), lineWidth: 1)
             )
+    }
+
+    private var footerCredit: some View {
+        Text("created by zav G")
+            .font(.system(size: 13, weight: .black, design: .rounded))
+            .foregroundStyle(.white.opacity(0.42))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
+            .padding(.bottom, 16)
     }
 
     private func controlToggle(_ title: String, _ keyPath: WritableKeyPath<OverlaySettings, Bool>) -> some View {
@@ -403,6 +446,8 @@ struct ContentView: View {
         let diagnostics = [
             "App Group Ready: \(ZGShared.appGroupReady ? "YES" : "NO")",
             "Broadcast Status: \(defaults.string(forKey: "broadcastStatus") ?? "not started")",
+            "Detected Scene: \(defaults.string(forKey: "broadcastScene") ?? "unknown")",
+            "Table Confidence: \(String(format: "%.2f", defaults.double(forKey: "broadcastTableConfidence")))",
             "Frames Processed: \(defaults.integer(forKey: "broadcastFrameCount"))",
             "Detected Balls: \(defaults.integer(forKey: "broadcastDetectedBalls"))",
             "Prediction Lines: \(defaults.integer(forKey: "broadcastLineCount"))",
@@ -431,6 +476,8 @@ struct ContentView: View {
         for key in [
             "broadcastStatus",
             "broadcastFrameCount",
+            "broadcastScene",
+            "broadcastTableConfidence",
             "broadcastDetectedBalls",
             "broadcastLineCount",
             "broadcastWriterStatus",

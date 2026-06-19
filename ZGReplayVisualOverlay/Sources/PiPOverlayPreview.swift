@@ -185,15 +185,21 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
             let border = UIBezierPath(roundedRect: tableFrame, cornerRadius: 26)
             border.lineWidth = 3
             border.stroke()
+            drawPockets(in: tableFrame)
 
             let transform = PiPTableTransform(source: overlay.table.cgRect, destination: tableFrame.insetBy(dx: 28, dy: 28))
 
-            for line in overlay.lines {
+            for (index, line) in overlay.lines.enumerated() {
                 let path = UIBezierPath()
                 path.move(to: transform.map(CGPoint(x: line.startX, y: line.startY)))
                 path.addLine(to: transform.map(CGPoint(x: line.endX, y: line.endY)))
-                color(red: line.red, green: line.green, blue: line.blue, alpha: max(0.18, line.alpha)).setStroke()
-                path.lineWidth = max(2, CGFloat(line.width) * 1.7)
+                if index == 0 {
+                    UIColor.white.withAlphaComponent(0.96).setStroke()
+                    path.lineWidth = max(4, CGFloat(line.width) * 1.9)
+                } else {
+                    color(red: line.red, green: line.green, blue: line.blue, alpha: max(0.26, line.alpha)).setStroke()
+                    path.lineWidth = max(2.6, CGFloat(line.width) * 1.55)
+                }
                 path.lineCapStyle = .round
                 path.stroke()
             }
@@ -219,12 +225,17 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
         ]
         NSString(string: "ZG LIVE").draw(at: CGPoint(x: 34, y: 28), withAttributes: titleAttributes)
 
-        let state = overlay == nil ? "waiting for scan" : "prediction preview"
+        let state: String
+        if let overlay {
+            state = "\(overlay.scene.uppercased())  \(Int(overlay.tableConfidence * 100))%"
+        } else {
+            state = "WAITING FOR SCAN"
+        }
         let stateAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .semibold),
             .foregroundColor: color(red: 0.20, green: 0.88, blue: 1.0, alpha: 1)
         ]
-        NSString(string: state.uppercased()).draw(at: CGPoint(x: 34, y: 70), withAttributes: stateAttributes)
+        NSString(string: state).draw(at: CGPoint(x: 34, y: 70), withAttributes: stateAttributes)
     }
 
     private func drawWaitingState(in rect: CGRect) {
@@ -249,6 +260,28 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
             .paragraphStyle: centeredParagraph()
         ]
         NSString(string: footer).draw(in: CGRect(x: 24, y: 566, width: 592, height: 32), withAttributes: attributes)
+    }
+
+    private func drawPockets(in tableFrame: CGRect) {
+        let pocketPoints = [
+            CGPoint(x: tableFrame.minX, y: tableFrame.minY),
+            CGPoint(x: tableFrame.midX, y: tableFrame.minY),
+            CGPoint(x: tableFrame.maxX, y: tableFrame.minY),
+            CGPoint(x: tableFrame.minX, y: tableFrame.maxY),
+            CGPoint(x: tableFrame.midX, y: tableFrame.maxY),
+            CGPoint(x: tableFrame.maxX, y: tableFrame.maxY)
+        ]
+
+        for point in pocketPoints {
+            let outer = UIBezierPath(ovalIn: CGRect(x: point.x - 17, y: point.y - 17, width: 34, height: 34))
+            color(red: 1.0, green: 0.08, blue: 0.08, alpha: 0.90).setStroke()
+            outer.lineWidth = 4
+            outer.stroke()
+
+            let inner = UIBezierPath(ovalIn: CGRect(x: point.x - 11, y: point.y - 11, width: 22, height: 22))
+            UIColor.black.setFill()
+            inner.fill()
+        }
     }
 
     private func centeredParagraph() -> NSMutableParagraphStyle {
@@ -287,8 +320,6 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
         )
-        context?.translateBy(x: 0, y: renderSize.height)
-        context?.scaleBy(x: 1, y: -1)
         context?.draw(image, in: CGRect(origin: .zero, size: renderSize))
         return pixelBuffer
     }
@@ -405,11 +436,30 @@ final class PiPOverlayPreviewHostView: UIView {
 private struct PiPOverlayModel: Decodable {
     var timestamp: Double
     var note: String
+    var scene: String
+    var tableConfidence: Double
     var table: PiPOverlayRect
     var lines: [PiPOverlayLine]
     var circles: [PiPOverlayCircle]
     var detectedBalls: Int
     var selectedPocket: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case timestamp, note, scene, tableConfidence, table, lines, circles, detectedBalls, selectedPocket
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        timestamp = try container.decodeIfPresent(Double.self, forKey: .timestamp) ?? Date().timeIntervalSince1970
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        scene = try container.decodeIfPresent(String.self, forKey: .scene) ?? "unknown"
+        tableConfidence = try container.decodeIfPresent(Double.self, forKey: .tableConfidence) ?? 0
+        table = try container.decode(PiPOverlayRect.self, forKey: .table)
+        lines = try container.decodeIfPresent([PiPOverlayLine].self, forKey: .lines) ?? []
+        circles = try container.decodeIfPresent([PiPOverlayCircle].self, forKey: .circles) ?? []
+        detectedBalls = try container.decodeIfPresent(Int.self, forKey: .detectedBalls) ?? 0
+        selectedPocket = try container.decodeIfPresent(Int.self, forKey: .selectedPocket) ?? 0
+    }
 }
 
 private struct PiPOverlayRect: Decodable {

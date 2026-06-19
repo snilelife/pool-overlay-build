@@ -12,7 +12,15 @@ Make the blue button act like a screen recording / screen sharing function, simi
 - The visible button says **START SCREEN RECORDING**.
 - The ReplayKit picker now has an explicit full-size SwiftUI frame and UIKit hit-test forwarding, so tapping anywhere on the blue button opens Apple's broadcast UI.
 - Added Floating Preview using `AVPictureInPictureController` and `AVSampleBufferDisplayLayer`.
-- Default picker mode no longer hard-forces the extension bundle ID. This is more reliable after phone signing.
+- Fixed Floating Preview video buffer orientation so text should no longer render upside down.
+- Made the app interface darker and added bottom credit `created by zav G`.
+- Made Direct ZG recorder mode default ON and surfaced it in the Screen Recording card.
+- Added installed-extension diagnostics so the app can report whether the broadcast `.appex` is actually embedded.
+- Added scene classification (`gameplay_table`, `partial_table_or_transition`, `lobby_menu`) and table confidence.
+- Improved table detection using green cloth, 2:1 table geometry, and six-pocket validation.
+- Added visible aim-guide detection so the first prediction line follows the in-game cue guide when visible.
+- Simplified the floating preview toward the reference style: dark table, red pocket rings, white main line, colored bounce lines.
+- Direct picker mode now defaults ON to target `Z G Overlay Record`; turn it OFF only to troubleshoot the full Apple chooser.
 - Added optional direct extension mode for testing.
 - Added microphone option toggle.
 - Added app group diagnostics.

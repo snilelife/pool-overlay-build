@@ -105,6 +105,28 @@ group.com.snilelife.zgreplayvisualoverlay
 
 If your Apple account/profile exposes Broadcast Upload capability, enable it for the broadcast extension profile. If the extension does not appear in Apple's broadcast sheet, or the broadcast stops after the countdown, check signing/entitlements first.
 
+If Apple's broadcast sheet shows apps like Photos, ChatGPT, or Discord but does **not** show:
+
+```text
+Z G Overlay Record
+```
+
+then the app opened the iOS recording UI correctly, but iOS does not see your broadcast extension as installed. Check these in order:
+
+1. In the app, open Broadcast Diagnostics.
+2. `Embedded .appex in installed app` must say `YES`.
+3. `Embedded extension display name` must say `Z G Overlay Record`.
+4. `App Group available now` should say `YES`.
+5. Your signer must sign the nested `.appex`, not only the main `.app`.
+
+If `Embedded .appex` says `NO`, the signer stripped or failed to install:
+
+```text
+Payload/ZGReplayVisualOverlay.app/PlugIns/ZGReplayVisualOverlayBroadcast.appex
+```
+
+If `Embedded .appex` says `YES` but the Apple sheet still does not list it, the likely problem is extension signing/capabilities.
+
 ## 5. First app test
 
 1. Install the signed IPA.
@@ -132,6 +154,21 @@ Z G Overlay Record
 8. Return to the app and check Analyzer State.
 
 You should see broadcast status, processed frames, detected balls, prediction line count, writer status, and replay availability.
+
+The scanner now reports:
+
+```text
+Detected Scene
+Table Confidence
+```
+
+Expected behavior:
+
+- lobby/matchmaking/menu screens report `lobby_menu` or `partial_table_or_transition`
+- real top-down gameplay table screens report `gameplay_table`
+- prediction lines only appear on `gameplay_table`
+- if the in-game white cue guide is visible, the first prediction follows that guide
+- if the cue guide is not visible, the analyzer falls back to ball/pocket geometry
 
 ## 6. Floating preview test
 

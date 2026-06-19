@@ -92,6 +92,8 @@ final class SampleHandler: RPBroadcastSampleHandler {
         defaults.set(Date().timeIntervalSince1970, forKey: "broadcastLastEvent")
         defaults.set(frameCount, forKey: "broadcastFrameCount")
         defaults.set(overlay.note, forKey: "broadcastLastNote")
+        defaults.set(overlay.scene, forKey: "broadcastScene")
+        defaults.set(overlay.tableConfidence, forKey: "broadcastTableConfidence")
         defaults.set(overlay.detectedBalls, forKey: "broadcastDetectedBalls")
         defaults.set(overlay.lines.count, forKey: "broadcastLineCount")
         defaults.set(FileManager.default.fileExists(atPath: replayURL.path), forKey: "broadcastReplayAvailable")
@@ -155,6 +157,8 @@ private struct BroadcastSettings {
 private struct OverlayModel: Codable {
     var timestamp: Double
     var note: String
+    var scene: String
+    var tableConfidence: Double
     var table: OverlayRect
     var lines: [OverlayLine]
     var circles: [OverlayCircle]
@@ -165,6 +169,8 @@ private struct OverlayModel: Codable {
         OverlayModel(
             timestamp: Date().timeIntervalSince1970,
             note: note,
+            scene: "unknown",
+            tableConfidence: 0,
             table: OverlayRect(x: 0, y: 0, width: 0, height: 0),
             lines: [],
             circles: [],
@@ -194,6 +200,19 @@ private struct ShotChoice {
     var pocketIndex: Int
 }
 
+private struct TableDetection {
+    var rect: CGRect
+    var scene: String
+    var confidence: Double
+    var greenHits: Int
+    var sampledPixels: Int
+    var pocketHits: Int
+
+    var isGameplay: Bool {
+        scene == "gameplay_table" && confidence >= 0.58 && pocketHits >= 4
+    }
+}
+
 private struct Accum {
     var sumX = 0.0
     var sumY = 0.0
@@ -219,20 +238,40 @@ private final class FrameAnalyzer {
         let analysisBuffer = makeBGRAIfNeeded(sourceBuffer) ?? sourceBuffer
         let width = Double(CVPixelBufferGetWidth(analysisBuffer))
         let height = Double(CVPixelBufferGetHeight(analysisBuffer))
-        let table = detectTableRect(in: analysisBuffer, width: width, height: height)
+        let tableDetection = detectTable(in: analysisBuffer, width: width, height: height)
+        let table = tableDetection.rect
+
+        guard tableDetection.isGameplay else {
+            return OverlayModel(
+                timestamp: Date().timeIntervalSince1970,
+                note: "scene=\(tableDetection.scene), table confidence=\(String(format: "%.2f", tableDetection.confidence)), pockets=\(tableDetection.pocketHits). Waiting for a top-down gameplay table.",
+                scene: tableDetection.scene,
+                tableConfidence: tableDetection.confidence,
+                table: OverlayRect(x: table.minX, y: table.minY, width: table.width, height: table.height),
+                lines: [],
+                circles: [],
+                detectedBalls: 0,
+                selectedPocket: 0
+            )
+        }
 
         let cue = findCueBall(in: analysisBuffer, table: table) ?? CGPoint(x: table.minX + table.width * 0.24, y: table.midY)
         let balls = findBallCandidates(in: analysisBuffer, table: table, cue: cue)
         let pockets = pocketPoints(table: table)
         let pocketIndex = max(0, min(settings.selectedPocket, pockets.count - 1))
         let choice = chooseShot(cue: cue, balls: balls, pockets: pockets, settings: settings)
+        let aimPath = findAimPath(in: analysisBuffer, cue: cue, table: table, maxBounces: settings.maxBounces)
 
         var lines: [OverlayLine] = []
         var circles: [OverlayCircle] = []
         let ballRadius = max(8.0, table.width * 0.018)
 
         if settings.predictionEnabled {
-            if let choice {
+            if aimPath.count >= 2 {
+                for index in 0..<max(0, aimPath.count - 1) {
+                    lines.append(line(aimPath[index], aimPath[index + 1], color: index == 0 ? (1, 1, 1, 0.96) : (0.18, 0.88, 1.0, 0.74), width: index == 0 ? 3.4 : 2.2))
+                }
+            } else if let choice {
                 lines.append(line(choice.cue, choice.ghost, color: (1, 1, 1, 0.94), width: 3.2))
                 lines.append(line(choice.object, choice.pocket, color: (0.10, 0.86, 1.0, 0.88), width: 2.6))
 
@@ -252,15 +291,17 @@ private final class FrameAnalyzer {
             }
 
             if settings.showSideLines {
-                lines.append(line(CGPoint(x: table.minX, y: table.midY), CGPoint(x: table.maxX, y: table.midY), color: (1.0, 0.86, 0.18, 0.30), width: 1.2))
-                lines.append(line(CGPoint(x: table.midX, y: table.minY), CGPoint(x: table.midX, y: table.maxY), color: (1.0, 0.86, 0.18, 0.30), width: 1.2))
+                lines.append(line(CGPoint(x: table.minX, y: table.midY), CGPoint(x: table.maxX, y: table.midY), color: (1.0, 0.86, 0.18, 0.20), width: 1.0))
+                lines.append(line(CGPoint(x: table.midX, y: table.minY), CGPoint(x: table.midX, y: table.maxY), color: (1.0, 0.86, 0.18, 0.20), width: 1.0))
             }
 
-            let bounceStart = choice?.cue ?? cue
-            let bounceTarget = choice?.pocket ?? pockets[pocketIndex]
-            let bounces = bouncePath(start: bounceStart, toward: bounceTarget, table: table, count: settings.maxBounces)
-            for index in 0..<max(0, bounces.count - 1) {
-                lines.append(line(bounces[index], bounces[index + 1], color: (0.45, 0.40, 1.0, 0.50), width: 1.5))
+            if aimPath.isEmpty {
+                let bounceStart = choice?.cue ?? cue
+                let bounceTarget = choice?.pocket ?? pockets[pocketIndex]
+                let bounces = bouncePath(start: bounceStart, toward: bounceTarget, table: table, count: settings.maxBounces)
+                for index in 0..<max(0, bounces.count - 1) {
+                    lines.append(line(bounces[index], bounces[index + 1], color: (0.45, 0.40, 1.0, 0.50), width: 1.5))
+                }
             }
 
             circles.append(circle(cue, radius: ballRadius, color: (1, 1, 1, 0.96), width: 2.8))
@@ -275,15 +316,19 @@ private final class FrameAnalyzer {
         }
 
         let note: String
-        if choice != nil {
-            note = "visual scan: table=ok, balls=\(balls.count), shot candidate=ok"
+        if !aimPath.isEmpty {
+            note = "scene=gameplay_table, aim guide=ok, balls=\(balls.count), confidence=\(String(format: "%.2f", tableDetection.confidence))"
+        } else if choice != nil {
+            note = "scene=gameplay_table, table=ok, balls=\(balls.count), shot candidate=ok, confidence=\(String(format: "%.2f", tableDetection.confidence))"
         } else {
-            note = "visual scan fallback: table=ok, balls=\(balls.count), no strong object-ball candidate"
+            note = "scene=gameplay_table, fallback: table=ok, balls=\(balls.count), no strong object-ball candidate, confidence=\(String(format: "%.2f", tableDetection.confidence))"
         }
 
         return OverlayModel(
             timestamp: Date().timeIntervalSince1970,
             note: note,
+            scene: tableDetection.scene,
+            tableConfidence: tableDetection.confidence,
             table: OverlayRect(x: table.minX, y: table.minY, width: table.width, height: table.height),
             lines: lines,
             circles: circles,
@@ -316,40 +361,110 @@ private final class FrameAnalyzer {
         return out
     }
 
-    private func detectTableRect(in pixelBuffer: CVPixelBuffer, width: Double, height: Double) -> CGRect {
+    private func detectTable(in pixelBuffer: CVPixelBuffer, width: Double, height: Double) -> TableDetection {
         let landscape = width >= height
         let fallback = landscape
-            ? CGRect(x: width * 0.145, y: height * 0.205, width: width * 0.710, height: height * 0.585)
-            : CGRect(x: width * 0.095, y: height * 0.365, width: width * 0.810, height: height * 0.260)
+            ? CGRect(x: width * 0.17, y: height * 0.16, width: width * 0.66, height: height * 0.70)
+            : CGRect(x: width * 0.19, y: height * 0.16, width: width * 0.62, height: height * 0.68)
 
-        guard let reader = PixelReader(pixelBuffer: pixelBuffer) else { return fallback }
+        guard let reader = PixelReader(pixelBuffer: pixelBuffer) else {
+            return TableDetection(rect: fallback, scene: "unknown", confidence: 0, greenHits: 0, sampledPixels: 0, pocketHits: 0)
+        }
         let search = landscape
-            ? CGRect(x: width * 0.05, y: height * 0.10, width: width * 0.90, height: height * 0.78)
-            : CGRect(x: width * 0.04, y: height * 0.28, width: width * 0.92, height: height * 0.46)
+            ? CGRect(x: width * 0.10, y: height * 0.08, width: width * 0.80, height: height * 0.86)
+            : CGRect(x: width * 0.08, y: height * 0.20, width: width * 0.84, height: height * 0.62)
 
-        var minX = Int(width), minY = Int(height), maxX = 0, maxY = 0, hits = 0
-        let step = 12
+        var minX = Int(width), minY = Int(height), maxX = 0, maxY = 0
+        var greenHits = 0
+        var sampledPixels = 0
+        let step = 8
         reader.withLockedBuffer {
             for y in stride(from: max(0, Int(search.minY)), through: min(Int(height) - 1, Int(search.maxY)), by: step) {
                 for x in stride(from: max(0, Int(search.minX)), through: min(Int(width) - 1, Int(search.maxX)), by: step) {
+                    sampledPixels += 1
                     let rgb = reader.rgbAt(x: x, y: y)
-                    let luma = rgb.luma
-                    let sat = rgb.saturation
-                    // Pool cloth is usually saturated blue/green/dark gray; skip black bars and bright HUD.
-                    if luma > 28 && luma < 185 && sat > 18 {
-                        minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y); hits += 1
+                    if isGreenCloth(rgb) {
+                        minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y); greenHits += 1
                     }
                 }
             }
         }
 
-        guard hits > 80 else { return fallback }
-        let detected = CGRect(x: Double(minX), y: Double(minY), width: Double(maxX - minX), height: Double(maxY - minY)).insetBy(dx: -20, dy: -12)
-        let aspect = detected.width / max(1.0, detected.height)
-        if detected.width > width * 0.45 && detected.height > height * 0.16 && aspect > 1.25 {
-            return detected.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        let greenRatio = Double(greenHits) / Double(max(1, sampledPixels))
+        let screen = CGRect(x: 0, y: 0, width: width, height: height)
+        let detected: CGRect
+        if greenHits > 120 {
+            let greenRect = CGRect(x: Double(minX), y: Double(minY), width: Double(maxX - minX), height: Double(maxY - minY))
+            detected = greenRect
+                .insetBy(dx: -max(18, greenRect.width * 0.055), dy: -max(18, greenRect.height * 0.075))
+                .intersection(screen)
+        } else {
+            detected = fallback
         }
-        return fallback
+
+        let aspect = detected.width / max(1.0, detected.height)
+        let areaRatio = detected.width * detected.height / max(1.0, width * height)
+        let aspectScore = clamp01(1.0 - abs(aspect - 2.0) / 0.85)
+        let areaScore = clamp01(1.0 - abs(areaRatio - 0.46) / 0.34)
+
+        var pocketHits = 0
+        reader.withLockedBuffer {
+            pocketHits = countPocketHits(reader: reader, table: detected)
+        }
+        let pocketScore = Double(pocketHits) / 6.0
+        let confidence = clamp01(greenRatio * 2.25 + pocketScore * 0.46 + aspectScore * 0.24 + areaScore * 0.18)
+
+        let scene: String
+        if confidence >= 0.58 && pocketHits >= 4 {
+            scene = "gameplay_table"
+        } else if greenRatio > 0.08 || pocketHits >= 2 {
+            scene = "partial_table_or_transition"
+        } else {
+            scene = "lobby_menu"
+        }
+
+        return TableDetection(rect: detected, scene: scene, confidence: confidence, greenHits: greenHits, sampledPixels: sampledPixels, pocketHits: pocketHits)
+    }
+
+    private func isGreenCloth(_ rgb: RGB) -> Bool {
+        rgb.green > 72 &&
+        rgb.green > rgb.red * 1.18 &&
+        rgb.green > rgb.blue * 1.08 &&
+        rgb.luma > 45 &&
+        rgb.luma < 190 &&
+        rgb.saturation > 34
+    }
+
+    private func countPocketHits(reader: PixelReader, table: CGRect) -> Int {
+        let points = pocketPoints(table: table)
+        let radius = max(16, min(table.width, table.height) * 0.060)
+        var hits = 0
+
+        for point in points {
+            var dark = 0
+            var total = 0
+            for y in stride(from: Int(point.y - radius), through: Int(point.y + radius), by: 4) {
+                for x in stride(from: Int(point.x - radius), through: Int(point.x + radius), by: 4) {
+                    let dx = CGFloat(x) - point.x
+                    let dy = CGFloat(y) - point.y
+                    guard dx * dx + dy * dy <= radius * radius else { continue }
+                    let rgb = reader.rgbAt(x: x, y: y)
+                    total += 1
+                    if rgb.luma < 55 && rgb.saturation < 105 {
+                        dark += 1
+                    }
+                }
+            }
+            if total > 0 && Double(dark) / Double(total) > 0.14 {
+                hits += 1
+            }
+        }
+
+        return hits
+    }
+
+    private func clamp01(_ value: Double) -> Double {
+        min(1.0, max(0.0, value))
     }
 
     private func findCueBall(in pixelBuffer: CVPixelBuffer, table: CGRect) -> CGPoint? {
@@ -445,6 +560,69 @@ private final class FrameAnalyzer {
             }
         }
         return best
+    }
+
+    private func findAimPath(in pixelBuffer: CVPixelBuffer, cue: CGPoint, table: CGRect, maxBounces: Int) -> [CGPoint] {
+        guard let reader = PixelReader(pixelBuffer: pixelBuffer) else { return [] }
+
+        let ballRadius = max(8.0, Double(table.width) * 0.018)
+        let maxDistance = Double(hypot(table.width, table.height))
+        let tableWithTolerance = table.insetBy(dx: -6, dy: -6)
+        var bestAngle: Double?
+        var bestScore = 0.0
+
+        reader.withLockedBuffer {
+            for degrees in stride(from: 0, to: 360, by: 3) {
+                let angle = Double(degrees) * Double.pi / 180.0
+                let ux = CGFloat(cos(angle))
+                let uy = CGFloat(sin(angle))
+                var score = 0.0
+                var streak = 0.0
+                var samples = 0
+
+                for distance in stride(from: ballRadius * 2.35, through: maxDistance, by: max(5.0, ballRadius * 0.34)) {
+                    let point = CGPoint(x: cue.x + CGFloat(distance) * ux, y: cue.y + CGFloat(distance) * uy)
+                    guard tableWithTolerance.contains(point) else { break }
+                    samples += 1
+
+                    if guideLineHit(reader: reader, point: point, ux: ux, uy: uy) {
+                        streak = min(streak + 1.0, 8.0)
+                        score += 2.0 + streak * 0.75
+                    } else {
+                        streak = max(0.0, streak - 1.5)
+                    }
+                }
+
+                if samples >= 10 && score > bestScore {
+                    bestScore = score
+                    bestAngle = angle
+                }
+            }
+        }
+
+        guard let bestAngle, bestScore > 28.0 else { return [] }
+        let ux = CGFloat(cos(bestAngle))
+        let uy = CGFloat(sin(bestAngle))
+        let target = CGPoint(x: cue.x + CGFloat(maxDistance * 1.6) * ux, y: cue.y + CGFloat(maxDistance * 1.6) * uy)
+        return bouncePath(start: cue, toward: target, table: table, count: max(1, maxBounces + 1))
+    }
+
+    private func guideLineHit(reader: PixelReader, point: CGPoint, ux: CGFloat, uy: CGFloat) -> Bool {
+        let nx = -uy
+        let ny = ux
+        var hits = 0
+
+        for offset in [-3.0, 0.0, 3.0] {
+            let sample = CGPoint(x: point.x + CGFloat(offset) * nx, y: point.y + CGFloat(offset) * ny)
+            let rgb = reader.rgbAt(x: Int(sample.x.rounded()), y: Int(sample.y.rounded()))
+            let whiteGuide = rgb.luma > 142 && rgb.saturation < 95
+            let paleGuide = rgb.luma > 118 && rgb.saturation < 58
+            if whiteGuide || paleGuide {
+                hits += 1
+            }
+        }
+
+        return hits >= 2
     }
 
     private func cross(a: CGPoint, b: CGPoint) -> Double { Double(a.x * b.y - a.y * b.x) }

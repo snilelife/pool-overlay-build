@@ -21,6 +21,13 @@ workflows:
       - name: Generate Xcode project
         script: |
           set -e
+          echo "Repository root:"
+          pwd
+          echo "Required root files:"
+          ls -la
+          test -f project.yml
+          test -d ZGReplayVisualOverlay/Sources
+          test -d ZGReplayVisualOverlayBroadcast/Sources
           xcodegen generate --spec project.yml
           test -d ZGReplayVisualOverlay.xcodeproj
       - name: Build unsigned IPA without signing
@@ -52,7 +59,13 @@ workflows:
           echo "Found app: $APP_PATH"
           echo "Checking nested broadcast extension:"
           find "$APP_PATH" -maxdepth 4 -print | sed -n '1,160p'
-          test -d "$APP_PATH/PlugIns/ZGReplayVisualOverlayBroadcast.appex"
+          EXT_PATH="$APP_PATH/PlugIns/ZGReplayVisualOverlayBroadcast.appex"
+          test -d "$EXT_PATH"
+          test -f "$EXT_PATH/Info.plist"
+          echo "Broadcast extension Info.plist:"
+          plutil -p "$EXT_PATH/Info.plist"
+          echo "Broadcast extension entitlement file expected in source:"
+          plutil -p ZGReplayVisualOverlayBroadcast/Resources/ZGReplayVisualOverlayBroadcast.entitlements
 
           mkdir -p unsigned_payload/Payload
           cp -R "$APP_PATH" unsigned_payload/Payload/

@@ -6,6 +6,10 @@ enum ZGShared {
     static let appGroupID = "group.com.snilelife.zgreplayvisualoverlay"
     static let extensionBundleID = "com.snilelife.zgreplayvisualoverlay.broadcast"
 
+    static var mainBundleID: String {
+        Bundle.main.bundleIdentifier ?? "unknown"
+    }
+
     static func sharedDefaults() -> UserDefaults {
         UserDefaults(suiteName: appGroupID) ?? .standard
     }
@@ -20,6 +24,24 @@ enum ZGShared {
     static var appGroupReady: Bool {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) != nil
     }
+
+    static var expectedExtensionURL: URL? {
+        Bundle.main.builtInPlugInsURL?.appendingPathComponent("ZGReplayVisualOverlayBroadcast.appex")
+    }
+
+    static var broadcastExtensionEmbedded: Bool {
+        guard let url = expectedExtensionURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    static var broadcastExtensionDisplayName: String {
+        guard let url = expectedExtensionURL,
+              let bundle = Bundle(url: url),
+              let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String else {
+            return "not found"
+        }
+        return name
+    }
 }
 
 struct OverlaySettings: Codable, Equatable {
@@ -31,10 +53,9 @@ struct OverlaySettings: Codable, Equatable {
     var showDetectedBalls = true
     var showGhostBall = true
     var showMicrophoneButton = false
-    /// Off by default because phone signers can change extension bundle IDs.
-    /// Off = Apple shows the normal chooser, where the user selects "Z G Overlay Record".
-    /// On = tries to open our extension directly by bundle ID.
-    var directZGExtensionMode = false
+    /// On by default so the blue button tries to open this broadcast extension directly.
+    /// If the button appears dead, turn this off to show Apple's full chooser and verify whether the extension is listed.
+    var directZGExtensionMode = true
     var lineLength: Double = 0.86
     var maxBounces: Int = 3
     var selectedPocket: Int = 1
