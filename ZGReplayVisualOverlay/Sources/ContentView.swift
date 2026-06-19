@@ -203,8 +203,8 @@ struct ContentView: View {
                 }
 
                 PiPOverlayPreviewSurface(controller: pipPreview)
-                    .aspectRatio(1, contentMode: .fit)
-                    .frame(maxWidth: 280)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .frame(maxWidth: 360)
                     .frame(maxWidth: .infinity)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -439,6 +439,7 @@ struct ContentView: View {
     private func refreshLatestState() {
         let url = ZGShared.sharedContainerURL().appendingPathComponent("zg_overlay_state.json")
         let replayURL = ZGShared.sharedContainerURL().appendingPathComponent("ZGAnnotatedReplay.mov")
+        let previewURL = ZGShared.sharedContainerURL().appendingPathComponent("ZGPreviewFrame.jpg")
         annotatedReplayURL = FileManager.default.fileExists(atPath: replayURL.path) ? replayURL : nil
 
         let defaults = ZGShared.sharedDefaults()
@@ -452,6 +453,7 @@ struct ContentView: View {
             "Detected Balls: \(defaults.integer(forKey: "broadcastDetectedBalls"))",
             "Prediction Lines: \(defaults.integer(forKey: "broadcastLineCount"))",
             "Writer Status: \(defaults.string(forKey: "broadcastWriterStatus") ?? "not recording")",
+            "Live Preview Frame: \(FileManager.default.fileExists(atPath: previewURL.path) ? "ready" : "not available")",
             "Replay File: \(annotatedReplayURL == nil ? "not available" : "ready to share")",
             "Last Event: \(format(timestamp: timestamp))"
         ].joined(separator: "\n")
@@ -468,7 +470,7 @@ struct ContentView: View {
 
     private func clearAnalyzerState() {
         let container = ZGShared.sharedContainerURL()
-        for filename in ["zg_overlay_state.json", "ZGAnnotatedReplay.mov"] {
+        for filename in ["zg_overlay_state.json", "ZGAnnotatedReplay.mov", "ZGPreviewFrame.jpg"] {
             try? FileManager.default.removeItem(at: container.appendingPathComponent(filename))
         }
 
@@ -483,6 +485,7 @@ struct ContentView: View {
             "broadcastWriterStatus",
             "broadcastWriterError",
             "broadcastReplayAvailable",
+            "broadcastPreviewFrameAvailable",
             "broadcastLastNote",
             "broadcastLastEvent"
         ] {

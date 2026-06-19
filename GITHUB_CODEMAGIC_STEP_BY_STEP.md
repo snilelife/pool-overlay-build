@@ -155,6 +155,18 @@ Z G Overlay Record
 
 You should see broadcast status, processed frames, detected balls, prediction line count, writer status, and replay availability.
 
+For the floating preview to show the actual game screen, these must become true after broadcast starts:
+
+```text
+Broadcast Status: running
+Frames Processed: increasing
+Live Preview Frame: ready
+```
+
+If `Frames Processed` stays `0`, the broadcast extension is not receiving video samples.
+
+If `Frames Processed` increases but `Live Preview Frame` stays `not available`, the extension is running but the app cannot read the shared preview frame. Check App Group signing.
+
 The scanner now reports:
 
 ```text

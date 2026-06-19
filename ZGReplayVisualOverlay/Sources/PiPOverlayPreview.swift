@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import CoreMedia
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -16,7 +17,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
     private var pipPossibleObservation: NSKeyValueObservation?
     private var timer: Timer?
     private var frameIndex: Int64 = 0
-    private let renderSize = CGSize(width: 640, height: 640)
+    private let renderSize = CGSize(width: 960, height: 540)
 
     override init() {
         super.init()
@@ -171,6 +172,12 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
             color(red: 0.015, green: 0.02, blue: 0.03, alpha: 1).setFill()
             context.fill(rect)
 
+            if let previewImage = loadLatestPreviewImage() {
+                draw(image: previewImage, in: rect)
+                drawLiveBadge(in: rect, overlay: overlay)
+                return
+            }
+
             drawHeader(in: rect, overlay: overlay)
 
             guard let overlay, overlay.table.width > 0, overlay.table.height > 0 else {
@@ -178,7 +185,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
                 return
             }
 
-            let tableFrame = CGRect(x: 54, y: 118, width: 532, height: 420)
+            let tableFrame = CGRect(x: 90, y: 104, width: 780, height: 330)
             color(red: 0.02, green: 0.18, blue: 0.16, alpha: 1).setFill()
             UIBezierPath(roundedRect: tableFrame, cornerRadius: 26).fill()
             UIColor(white: 1, alpha: 0.18).setStroke()
@@ -218,6 +225,39 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
         return image.cgImage
     }
 
+    private func loadLatestPreviewImage() -> CGImage? {
+        let url = ZGShared.sharedContainerURL().appendingPathComponent("ZGPreviewFrame.jpg")
+        guard FileManager.default.fileExists(atPath: url.path),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
+    private func draw(image: CGImage, in rect: CGRect) {
+        let imageSize = CGSize(width: image.width, height: image.height)
+        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
+        let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let drawRect = CGRect(
+            x: rect.midX - drawSize.width * 0.5,
+            y: rect.midY - drawSize.height * 0.5,
+            width: drawSize.width,
+            height: drawSize.height
+        )
+        UIImage(cgImage: image).draw(in: drawRect)
+    }
+
+    private func drawLiveBadge(in rect: CGRect, overlay: PiPOverlayModel?) {
+        let badge = CGRect(x: 18, y: 16, width: 214, height: 46)
+        UIColor.black.withAlphaComponent(0.68).setFill()
+        UIBezierPath(roundedRect: badge, cornerRadius: 16).fill()
+
+        let label = overlay.map { "\($0.scene.uppercased()) \(Int($0.tableConfidence * 100))%" } ?? "LIVE SCAN"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.monospacedSystemFont(ofSize: 18, weight: .heavy),
+            .foregroundColor: color(red: 0.18, green: 0.90, blue: 1.0, alpha: 1)
+        ]
+        NSString(string: label).draw(at: CGPoint(x: 34, y: 28), withAttributes: attributes)
+    }
+
     private func drawHeader(in rect: CGRect, overlay: PiPOverlayModel?) {
         let titleAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 32, weight: .black),
@@ -239,17 +279,20 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
     }
 
     private func drawWaitingState(in rect: CGRect) {
-        let box = CGRect(x: 54, y: 146, width: 532, height: 340)
+        let box = CGRect(x: 120, y: 136, width: 720, height: 276)
         UIColor.white.withAlphaComponent(0.06).setFill()
         UIBezierPath(roundedRect: box, cornerRadius: 28).fill()
 
+        let message = ZGShared.appGroupReady
+            ? "Start a broadcast to feed live scan data into this floating preview."
+            : "App Group is not available. The recorder cannot send scan frames to this preview until signing keeps the App Group entitlement."
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 24, weight: .bold),
             .foregroundColor: UIColor.white.withAlphaComponent(0.74),
             .paragraphStyle: centeredParagraph()
         ]
-        NSString(string: "Start a broadcast to feed live scan data into this floating preview.")
-            .draw(in: box.insetBy(dx: 36, dy: 118), withAttributes: attributes)
+        NSString(string: message)
+            .draw(in: box.insetBy(dx: 44, dy: 92), withAttributes: attributes)
     }
 
     private func drawFooter(in rect: CGRect, overlay: PiPOverlayModel) {
@@ -259,7 +302,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
             .foregroundColor: UIColor.white.withAlphaComponent(0.80),
             .paragraphStyle: centeredParagraph()
         ]
-        NSString(string: footer).draw(in: CGRect(x: 24, y: 566, width: 592, height: 32), withAttributes: attributes)
+        NSString(string: footer).draw(in: CGRect(x: 24, y: 488, width: 912, height: 32), withAttributes: attributes)
     }
 
     private func drawPockets(in tableFrame: CGRect) {

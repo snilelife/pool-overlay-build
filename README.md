@@ -12,6 +12,7 @@ This version changes the old small blue broadcast square into a **WhatsApp-style
 - Added scene classification so lobby/menu frames do not get prediction lines.
 - Improved gameplay-table detection using green cloth, six-pocket geometry, and table confidence.
 - Added visible aim-guide detection for simpler, cleaner prediction lines.
+- Added live annotated preview frames from the broadcast extension so PiP can show the captured game screen, not only synthetic JSON lines.
 - Uses Apple's ReplayKit broadcast sheet, the same user-approved style used by screen sharing apps.
 - Default mode opens Apple's normal broadcast chooser, which is safer after phone signing.
 - Added optional microphone button toggle.

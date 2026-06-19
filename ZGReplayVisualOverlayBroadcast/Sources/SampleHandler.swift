@@ -3,10 +3,13 @@ import CoreGraphics
 import CoreImage
 import CoreMedia
 import Foundation
+import ImageIO
 import ReplayKit
+import UniformTypeIdentifiers
 
 final class SampleHandler: RPBroadcastSampleHandler {
     private let analyzer = FrameAnalyzer()
+    private let previewWriter = PreviewFrameWriter()
     private var writer: AnnotatedMovieWriter?
     private var lastOverlay: OverlayModel?
     private var frameCount = 0
@@ -20,6 +23,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
         writerCreationFailed = false
         lastWriterError = nil
         try? FileManager.default.removeItem(at: Shared.containerURL.appendingPathComponent("ZGAnnotatedReplay.mov"))
+        try? FileManager.default.removeItem(at: Shared.containerURL.appendingPathComponent("ZGPreviewFrame.jpg"))
         writeState(OverlayModel.empty(note: "broadcast started"), status: "started")
     }
 
@@ -49,6 +53,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             overlay = analyzer.makeOverlay(from: sampleBuffer, settings: settings)
             lastOverlay = overlay
             writeState(overlay, status: "running")
+            previewWriter.write(sampleBuffer, overlay: settings.predictionEnabled ? overlay : .empty(note: "prediction disabled"))
         } else {
             overlay = lastOverlay ?? analyzer.makeOverlay(from: sampleBuffer, settings: settings)
         }
@@ -87,6 +92,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
     private func writeDiagnostics(status: String, overlay: OverlayModel) {
         let replayURL = Shared.containerURL.appendingPathComponent("ZGAnnotatedReplay.mov")
+        let previewURL = Shared.containerURL.appendingPathComponent("ZGPreviewFrame.jpg")
         let defaults = Shared.defaults
         defaults.set(status, forKey: "broadcastStatus")
         defaults.set(Date().timeIntervalSince1970, forKey: "broadcastLastEvent")
@@ -97,6 +103,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
         defaults.set(overlay.detectedBalls, forKey: "broadcastDetectedBalls")
         defaults.set(overlay.lines.count, forKey: "broadcastLineCount")
         defaults.set(FileManager.default.fileExists(atPath: replayURL.path), forKey: "broadcastReplayAvailable")
+        defaults.set(FileManager.default.fileExists(atPath: previewURL.path), forKey: "broadcastPreviewFrameAvailable")
         defaults.set(writerCreationFailed ? "failed to create writer" : (writer?.statusText ?? "not recording"), forKey: "broadcastWriterStatus")
 
         if let error = lastWriterError ?? writer?.errorDescription {
@@ -788,7 +795,7 @@ private final class AnnotatedMovieWriter {
         CVPixelBufferPoolCreatePixelBuffer(nil, pool, &outputBuffer)
         guard let outputBuffer else { return }
         ciContext.render(CIImage(cvPixelBuffer: imageBuffer), to: outputBuffer)
-        draw(overlay: overlay, into: outputBuffer)
+        OverlayFrameDrawer.draw(overlay: overlay, into: outputBuffer)
         adaptor.append(outputBuffer, withPresentationTime: presentationTime)
     }
 
@@ -818,8 +825,53 @@ private final class AnnotatedMovieWriter {
     var errorDescription: String? {
         writer.error?.localizedDescription
     }
+}
 
-    private func draw(overlay: OverlayModel, into pixelBuffer: CVPixelBuffer) {
+private final class PreviewFrameWriter {
+    private let ciContext = CIContext()
+    private var lastWrite = Date.distantPast
+
+    func write(_ sampleBuffer: CMSampleBuffer, overlay: OverlayModel) {
+        guard Date().timeIntervalSince(lastWrite) > 0.18,
+              let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        lastWrite = Date()
+
+        let width = CVPixelBufferGetWidth(imageBuffer)
+        let height = CVPixelBufferGetHeight(imageBuffer)
+        var outputBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            [
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+            ] as CFDictionary,
+            &outputBuffer
+        )
+        guard let outputBuffer else { return }
+
+        ciContext.render(CIImage(cvPixelBuffer: imageBuffer), to: outputBuffer)
+        OverlayFrameDrawer.draw(overlay: overlay, into: outputBuffer)
+
+        let ciImage = CIImage(cvPixelBuffer: outputBuffer)
+        guard let cgImage = ciContext.createCGImage(ciImage, from: CGRect(x: 0, y: 0, width: width, height: height)) else { return }
+
+        let outputURL = Shared.containerURL.appendingPathComponent("ZGPreviewFrame.jpg")
+        let tempURL = Shared.containerURL.appendingPathComponent("ZGPreviewFrame.tmp.jpg")
+        guard let destination = CGImageDestinationCreateWithURL(tempURL as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return }
+        let options = [kCGImageDestinationLossyCompressionQuality as String: 0.72] as CFDictionary
+        CGImageDestinationAddImage(destination, cgImage, options)
+        guard CGImageDestinationFinalize(destination) else { return }
+        try? FileManager.default.removeItem(at: outputURL)
+        try? FileManager.default.moveItem(at: tempURL, to: outputURL)
+    }
+}
+
+private enum OverlayFrameDrawer {
+    static func draw(overlay: OverlayModel, into pixelBuffer: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
@@ -832,10 +884,11 @@ private final class AnnotatedMovieWriter {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
-        // Draw table calibration rectangle first.
-        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.18))
-        context.setLineWidth(1.2)
-        context.stroke(CGRect(x: overlay.table.x, y: overlay.table.y, width: overlay.table.width, height: overlay.table.height))
+        if overlay.table.width > 0 && overlay.table.height > 0 {
+            context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.18))
+            context.setLineWidth(1.2)
+            context.stroke(CGRect(x: overlay.table.x, y: overlay.table.y, width: overlay.table.width, height: overlay.table.height))
+        }
 
         for line in overlay.lines {
             context.setStrokeColor(CGColor(red: line.red, green: line.green, blue: line.blue, alpha: line.alpha))
