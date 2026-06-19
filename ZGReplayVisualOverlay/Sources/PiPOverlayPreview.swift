@@ -17,6 +17,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
     private var pipPossibleObservation: NSKeyValueObservation?
     private var timer: Timer?
     private var frameIndex: Int64 = 0
+    private let relayPoller = ZGRelayPoller()
     private let renderSize = CGSize(width: 960, height: 540)
 
     override init() {
@@ -25,11 +26,13 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
         displayLayer.backgroundColor = UIColor.black.cgColor
         configureAudioSession()
         configurePictureInPictureIfNeeded()
+        relayPoller.start()
         startRendering()
     }
 
     deinit {
         timer?.invalidate()
+        relayPoller.stop()
         pipPossibleObservation?.invalidate()
     }
 
@@ -162,7 +165,7 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
         if let fileData = try? Data(contentsOf: url) {
             data = fileData
         } else {
-            data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardOverlayKey)
+            data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardOverlayKey) ?? relayPoller.latestStateData
         }
         guard let data else { return nil }
         return try? JSONDecoder().decode(PiPOverlayModel.self, from: data)
@@ -239,10 +242,17 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
             return image
         }
 
-        guard fallbackPreviewIsFresh(),
-              let data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardPreviewKey) as CFData?,
-              let source = CGImageSourceCreateWithData(data, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        if fallbackPreviewIsFresh(),
+           let data = ZGShared.sharedPasteboard?.data(forPasteboardType: ZGShared.pasteboardPreviewKey) as CFData?,
+           let source = CGImageSourceCreateWithData(data, nil),
+           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                return image
+        }
+
+        guard relayPoller.frameIsFresh(maxAge: previewHoldSeconds()),
+              let relayData = relayPoller.latestFrameData as CFData?,
+              let relaySource = CGImageSourceCreateWithData(relayData, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(relaySource, 0, nil)
     }
 
     private func fallbackPreviewIsFresh() -> Bool {
@@ -432,6 +442,86 @@ final class PiPOverlayPreviewController: NSObject, ObservableObject {
 
     private func color(red: Double, green: Double, blue: Double, alpha: Double) -> UIColor {
         UIColor(red: CGFloat(red), green: CGFloat(green), blue: CGFloat(blue), alpha: CGFloat(alpha))
+    }
+}
+
+private final class ZGRelayPoller {
+    private(set) var latestStateData: Data?
+    private(set) var latestFrameData: Data?
+    private var latestFrameDate: Date?
+    private var timer: Timer?
+    private var isFetching = false
+
+    func start() {
+        guard relayEnabled else { return }
+        fetch()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.30, repeats: true) { [weak self] _ in
+            self?.fetch()
+        }
+        if let timer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    func frameIsFresh(maxAge: Double) -> Bool {
+        guard let latestFrameDate else { return false }
+        return Date().timeIntervalSince(latestFrameDate) < maxAge
+    }
+
+    private var relayEnabled: Bool {
+        !ZGShared.relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func fetch() {
+        guard relayEnabled, !isFetching else { return }
+        isFetching = true
+
+        let group = DispatchGroup()
+
+        if let stateURL = endpoint("/latest/\(ZGShared.relayStreamKey)/state") {
+            group.enter()
+            URLSession.shared.dataTask(with: stateURL) { [weak self] data, response, _ in
+                defer { group.leave() }
+                guard let self,
+                      let data,
+                      !data.isEmpty,
+                      (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+                DispatchQueue.main.async {
+                    self.latestStateData = data
+                }
+            }.resume()
+        }
+
+        if let frameURL = endpoint("/latest/\(ZGShared.relayStreamKey)/frame") {
+            group.enter()
+            URLSession.shared.dataTask(with: frameURL) { [weak self] data, response, _ in
+                defer { group.leave() }
+                guard let self,
+                      let data,
+                      !data.isEmpty,
+                      (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+                DispatchQueue.main.async {
+                    self.latestFrameData = data
+                    self.latestFrameDate = Date()
+                }
+            }.resume()
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            self?.isFetching = false
+        }
+    }
+
+    private func endpoint(_ path: String) -> URL? {
+        let raw = ZGShared.relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        let base = raw.hasSuffix("/") ? String(raw.dropLast()) : raw
+        return URL(string: base + path)
     }
 }
 

@@ -511,6 +511,7 @@ struct ContentView: View {
                 labelValue("Embedded extension display name", ZGShared.broadcastExtensionDisplayName)
                 labelValue("Shared App Group", ZGShared.appGroupID)
                 labelValue("App Group available now", ZGShared.appGroupReady ? "YES" : "NO / signer may need App Group entitlement")
+                labelValue("Relay Bridge", relayStatusText)
                 labelValue("ReplayKit API path", "RPSystemBroadcastPickerView + RPBroadcastSampleHandler")
 
                 Toggle("Direct ZG extension mode", isOn: binding(\.directZGExtensionMode))
@@ -638,6 +639,7 @@ struct ContentView: View {
             "Prediction Lines: \(defaults.integer(forKey: "broadcastLineCount"))",
             "Writer Status: \(defaults.string(forKey: "broadcastWriterStatus") ?? "not recording")",
             "Fallback Bridge: \(ZGShared.sharedPasteboard == nil ? "not available" : "ready")",
+            "Relay Bridge: \(relayStatusText)",
             "Live Preview Frame: \(previewFrameStatus(fileURL: previewURL, pasteboardData: pasteboardPreviewData, timestampData: pasteboardPreviewTimestamp))",
             "Replay File: \(annotatedReplayURL == nil ? "not available" : "ready to share")",
             "Last Event: \(format(timestamp: timestamp))"
@@ -675,6 +677,12 @@ struct ContentView: View {
     private func previewHoldSeconds() -> Double {
         guard store.settings.holdScanResult else { return 1.0 }
         return min(30.0, max(2.0, store.settings.holdScanSeconds))
+    }
+
+    private var relayStatusText: String {
+        ZGShared.relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "OFF - set relayBaseURL for network fallback"
+            : "ON - \(ZGShared.relayBaseURL)"
     }
 
     private var scanRouteHelp: String {

@@ -136,6 +136,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
         guard let data = try? JSONEncoder.pretty.encode(overlay) else { return }
         try? data.write(to: url, options: .atomic)
         Shared.pasteboard?.setData(data, forPasteboardType: Shared.pasteboardOverlayKey)
+        RelayClient.postState(data)
         writeDiagnostics(status: status, overlay: overlay)
     }
 
@@ -171,6 +172,10 @@ private enum Shared {
     static let pasteboardOverlayKey = "zg_overlay_state_json"
     static let pasteboardPreviewKey = "zg_preview_frame_jpeg"
     static let pasteboardPreviewTimestampKey = "zg_preview_frame_timestamp"
+    /// Optional fallback bridge when App Group signing is broken.
+    /// Must match ZGShared.relayBaseURL in the main app target.
+    static let relayBaseURL = ""
+    static let relayStreamKey = "zg-default"
 
     static var containerURL: URL {
         if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
@@ -185,6 +190,34 @@ private enum Shared {
 
     static var pasteboard: UIPasteboard? {
         UIPasteboard(name: UIPasteboard.Name(pasteboardName), create: true)
+    }
+}
+
+private enum RelayClient {
+    static func postState(_ data: Data) {
+        post(data, path: "/push/\(Shared.relayStreamKey)/state", contentType: "application/json")
+    }
+
+    static func postFrame(_ data: Data) {
+        post(data, path: "/push/\(Shared.relayStreamKey)/frame", contentType: "image/jpeg")
+    }
+
+    private static func post(_ data: Data, path: String, contentType: String) {
+        guard let url = endpoint(path) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 2.5
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.httpBody = data
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    private static func endpoint(_ path: String) -> URL? {
+        let raw = Shared.relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        let base = raw.hasSuffix("/") ? String(raw.dropLast()) : raw
+        return URL(string: base + path)
     }
 }
 
@@ -1101,6 +1134,7 @@ private final class PreviewFrameWriter {
         try? FileManager.default.moveItem(at: tempURL, to: outputURL)
         if let data = try? Data(contentsOf: outputURL) {
             Shared.pasteboard?.setData(data, forPasteboardType: Shared.pasteboardPreviewKey)
+            RelayClient.postFrame(data)
             if let timestampData = "\(Date().timeIntervalSince1970)".data(using: .utf8) {
                 Shared.pasteboard?.setData(timestampData, forPasteboardType: Shared.pasteboardPreviewTimestampKey)
             }

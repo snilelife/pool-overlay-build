@@ -22,6 +22,7 @@ IMPROVEMENT_REPORT.md
 GITHUB_CODEMAGIC_STEP_BY_STEP.md
 ZGReplayVisualOverlay/
 ZGReplayVisualOverlayBroadcast/
+ZGOverlayRelayServer/
 ```
 
 Do not upload the parent zip folder itself as a folder inside the repo. The files above must be at the repo root.
@@ -56,6 +57,12 @@ Screen-recording analyzer extension:
 
 ```text
 ZGReplayVisualOverlayBroadcast/Sources/SampleHandler.swift
+```
+
+Optional relay fallback server:
+
+```text
+ZGOverlayRelayServer/
 ```
 
 XcodeGen project config:
@@ -175,6 +182,8 @@ If `Frames Processed` stays `0`, the broadcast extension is not receiving video 
 
 If `Frames Processed` increases but `Live Preview Frame` stays `not available`, the extension is running but the app cannot read the shared preview frame. Check App Group signing.
 
+If App Group signing keeps failing, use the Relay Bridge fallback in section 8.
+
 The scanner now reports:
 
 ```text
@@ -249,7 +258,12 @@ iOS does not support a normal app silently launching as a private overlay on top
 Route A - Manual:
 Open Z G Replay Overlay, start broadcast, start floating preview, switch to the game.
 
-Route B - Shortcut:
+Route B - Relay Bridge:
+Deploy ZGOverlayRelayServer to a public HTTPS host.
+Set relayBaseURL in both Swift files.
+Rebuild the IPA.
+
+Route C - Shortcut:
 Create an iOS Shortcut:
 1. Open App: Z G Replay Overlay
 2. Wait 2 seconds
@@ -257,9 +271,56 @@ Create an iOS Shortcut:
 
 Start the broadcast/PiP before the shortcut opens the game.
 
-Route C - Native later:
+Route D - Native later:
 When source code is recovered, add the same prediction HUD directly as a Cocos2d-x layer in your game.
 ```
+
+## 8. Relay Bridge fallback
+
+Use this when recording starts but the app/PiP still cannot receive frames because App Group is broken after signing.
+
+1. Deploy:
+
+```text
+ZGOverlayRelayServer/
+```
+
+to a public HTTPS host such as Render, Railway, Fly.io, or a VPS.
+
+2. Open:
+
+```text
+ZGReplayVisualOverlay/Sources/OverlaySettings.swift
+ZGReplayVisualOverlayBroadcast/Sources/SampleHandler.swift
+```
+
+3. In both files, set the same URL:
+
+```swift
+static let relayBaseURL = "https://your-zg-relay-host"
+```
+
+4. Keep the same stream key in both:
+
+```swift
+static let relayStreamKey = "zg-default"
+```
+
+5. Commit, push, rebuild in Codemagic, sign, install.
+
+6. In the app, open Status and check:
+
+```text
+Relay Bridge: ON
+```
+
+This changes the live data route to:
+
+```text
+Broadcast Extension -> HTTPS Relay -> PiP Preview
+```
+
+It does not depend on App Group entitlements.
 
 ## 7. What changed for PiP
 

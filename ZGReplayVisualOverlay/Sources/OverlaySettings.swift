@@ -10,6 +10,10 @@ enum ZGShared {
     static let pasteboardOverlayKey = "zg_overlay_state_json"
     static let pasteboardPreviewKey = "zg_preview_frame_jpeg"
     static let pasteboardPreviewTimestampKey = "zg_preview_frame_timestamp"
+    /// Optional fallback bridge when App Group signing is broken.
+    /// Example: "https://your-zg-relay.onrender.com"
+    static let relayBaseURL = ""
+    static let relayStreamKey = "zg-default"
 
     static var mainBundleID: String {
         Bundle.main.bundleIdentifier ?? "unknown"

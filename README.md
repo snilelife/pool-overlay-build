@@ -4,7 +4,7 @@ This version changes the old small blue broadcast square into a **WhatsApp-style
 
 ## What changed in V3
 
-  - Animated entry screen with private code `‘‘‘.
+- Animated entry screen with private code `777`.
 - Three-page app layout: **Live**, **Assist**, and **Status**.
 - Live feature tiles show Scanner, Scan Route, Prediction Style, and Hold Window.
 - Bubble-style ZG branding on the entry screen and header.
@@ -21,6 +21,7 @@ This version changes the old small blue broadcast square into a **WhatsApp-style
 - Added stable table locking to reduce line jitter.
 - Added visible aim-guide detection for simpler, cleaner prediction lines.
 - Added live annotated preview frames from the broadcast extension so PiP can show the captured game screen, not only synthetic JSON lines.
+- Added optional **Relay Bridge** fallback for builds where signing breaks App Group sharing.
 - Uses Apple's ReplayKit broadcast sheet, the same user-approved style used by screen sharing apps.
 - Default mode opens Apple's normal broadcast chooser, which is safer after phone signing.
 - Added optional microphone button toggle.
@@ -49,6 +50,7 @@ codemagic.yaml
 project.yml
 ZGReplayVisualOverlay
 ZGReplayVisualOverlayBroadcast
+ZGOverlayRelayServer
 README.md
 DO_THIS_FIRST_SIMPLE.md
 LIMITS_READ_FIRST.md
@@ -161,14 +163,53 @@ iOS does not allow a separate normal app to inject a private overlay into anothe
 Route A - Current app:
 ReplayKit broadcast + PiP floating preview.
 
-Route B - Shortcut flow:
+Route B - Relay Bridge:
+ReplayKit broadcast sends scan data to a tiny HTTPS relay, and PiP reads from that relay.
+Use this when App Group says NO or preview frames never reach the main app.
+
+Route C - Shortcut flow:
 Create an iOS Shortcut that opens Z G Replay Overlay first, then opens your game after you start PiP.
 
-Route C - Native source-code integration:
+Route D - Native source-code integration:
 When you recover the Cocos2d-x source, add the prediction HUD as a Cocos2d-x layer inside the game itself.
 ```
 
-Route C is the only way to make it behave exactly like an in-game overlay without relying on PiP.
+Route D is the only way to make it behave exactly like an in-game overlay without relying on PiP.
+
+## Relay Bridge Fallback
+
+If recording starts but the floating preview still says no scan, deploy the included relay server:
+
+```text
+ZGOverlayRelayServer/
+```
+
+Deploy it to a public HTTPS host, then edit both constants:
+
+```text
+ZGReplayVisualOverlay/Sources/OverlaySettings.swift
+ZGReplayVisualOverlayBroadcast/Sources/SampleHandler.swift
+```
+
+Set:
+
+```swift
+static let relayBaseURL = "https://your-zg-relay-host"
+```
+
+Keep the same stream key in both files:
+
+```swift
+static let relayStreamKey = "zg-default"
+```
+
+Then rebuild with Codemagic. The data path becomes:
+
+```text
+Broadcast Extension -> HTTPS Relay -> Main App PiP Preview
+```
+
+This bypasses broken App Group sharing.
 
 ## iOS rule
 

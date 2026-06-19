@@ -22,6 +22,8 @@ Make the blue button act like a screen recording / screen sharing function, simi
 - Added four scan routes: Auto Hybrid, Guide Lock, Ball Geometry, Corner Lock.
 - Added three prediction styles: Simple, Advanced, Pro Video.
 - Added Pro Video visual layers: glow strokes, pocket locks, ghost-ball ring, bank hints, and after-hit guides.
+- Added optional Relay Bridge fallback: Broadcast Extension -> HTTPS relay -> PiP Preview.
+- Added `ZGOverlayRelayServer/`, a tiny Node relay server for builds where App Group sharing fails.
 - Made Direct ZG recorder mode default ON and surfaced it in the Screen Recording card.
 - Added installed-extension diagnostics so the app can report whether the broadcast `.appex` is actually embedded.
 - Added scene classification (`gameplay_table`, `partial_table_or_transition`, `lobby_menu`) and table confidence.
@@ -44,3 +46,7 @@ Direct ZG recorder mode is ON by default so the blue button targets `Z G Overlay
 ## Launch-together note
 
 The supported near-in-game workflow is ReplayKit broadcast + PiP. A separate normal iOS app cannot silently inject a private overlay into another app. Once the original Cocos2d-x source is recovered, the best final version is a native in-game HUD layer using the same prediction logic.
+
+## Different solution added
+
+If the local App Group bridge still fails after signing, use Relay Bridge. It avoids App Group and pasteboard communication by sending the latest state and preview frame through a small HTTPS server.
