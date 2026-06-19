@@ -1,0 +1,94 @@
+name: ZGReplayVisualOverlay
+options:
+  minimumXcodeGenVersion: 2.42.0
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_BITCODE: "NO"
+    CODE_SIGNING_STYLE: Manual
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  ZGReplayVisualOverlay:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ZGReplayVisualOverlay/Sources
+    resources:
+      - path: ZGReplayVisualOverlay/Resources
+    dependencies:
+      - target: ZGReplayVisualOverlayBroadcast
+        embed: true
+        codeSign: false
+    info:
+      path: ZGReplayVisualOverlay/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: "Z G Replay Overlay"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes:
+          - audio
+        NSPhotoLibraryUsageDescription: "Choose screenshots for visual table calibration."
+        NSCameraUsageDescription: "Optional future camera calibration; not required for ReplayKit broadcast."
+        NSMicrophoneUsageDescription: "Optional microphone audio can be included in a screen broadcast."
+    entitlements:
+      path: ZGReplayVisualOverlay/Resources/ZGReplayVisualOverlay.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snilelife.zgreplayvisualoverlay
+        PRODUCT_NAME: ZGReplayVisualOverlay
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        SUPPORTS_MACCATALYST: "NO"
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        VALIDATE_PRODUCT: "NO"
+    scheme:
+      gatherCoverageData: false
+      testTargets: []
+
+  ZGReplayVisualOverlayBroadcast:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ZGReplayVisualOverlayBroadcast/Sources
+    resources:
+      - path: ZGReplayVisualOverlayBroadcast/Resources
+    info:
+      path: ZGReplayVisualOverlayBroadcast/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: "Z G Overlay Record"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).SampleHandler"
+          NSExtensionAttributes:
+            RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+        NSPhotoLibraryAddUsageDescription: "Save the annotated replay recording."
+        NSMicrophoneUsageDescription: "Optional microphone audio can be included in a screen broadcast."
+    entitlements:
+      path: ZGReplayVisualOverlayBroadcast/Resources/ZGReplayVisualOverlayBroadcast.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snilelife.zgreplayvisualoverlay.broadcast
+        PRODUCT_NAME: ZGReplayVisualOverlayBroadcast
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SUPPORTS_MACCATALYST: "NO"
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        VALIDATE_PRODUCT: "NO"
