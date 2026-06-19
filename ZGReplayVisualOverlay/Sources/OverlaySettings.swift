@@ -12,7 +12,7 @@ enum ZGShared {
     static let pasteboardPreviewTimestampKey = "zg_preview_frame_timestamp"
     /// Optional fallback bridge when App Group signing is broken.
     /// Example: "https://your-zg-relay.onrender.com"
-    static let relayBaseURL = ""
+    static let relayBaseURL = "https://zg-overlay-relay-2.onrender.com"
     static let relayStreamKey = "zg-default"
 
     static var mainBundleID: String {
