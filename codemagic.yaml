@@ -1,0 +1,64 @@
+workflows:
+  unsigned-ios-ipa:
+    name: Build Z G Replay Visual Overlay unsigned IPA
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+    scripts:
+      - name: Show build machine
+        script: |
+          set -e
+          sw_vers
+          xcodebuild -version
+      - name: Install XcodeGen if needed
+        script: |
+          set -e
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+      - name: Generate Xcode project
+        script: |
+          set -e
+          xcodegen generate --spec project.yml
+          test -d ZGReplayVisualOverlay.xcodeproj
+      - name: Build unsigned IPA without signing
+        script: |
+          set -euo pipefail
+          rm -rf build unsigned_payload artifacts
+          xcodebuild \
+            -project ZGReplayVisualOverlay.xcodeproj \
+            -scheme ZGReplayVisualOverlay \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            clean build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ONLY_ACTIVE_ARCH=NO
+
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app was produced. Build products:"
+            find build/Build/Products -maxdepth 4 -print || true
+            exit 1
+          fi
+
+          echo "Found app: $APP_PATH"
+          echo "Checking nested broadcast extension:"
+          find "$APP_PATH" -maxdepth 4 -print | sed -n '1,160p'
+          test -d "$APP_PATH/PlugIns/ZGReplayVisualOverlayBroadcast.appex"
+
+          mkdir -p unsigned_payload/Payload
+          cp -R "$APP_PATH" unsigned_payload/Payload/
+          mkdir -p artifacts
+          (cd unsigned_payload && zip -qry ../artifacts/ZGReplayVisualOverlay-ScreenRecording-V3-unsigned.ipa Payload)
+          ls -lh artifacts
+    artifacts:
+      - artifacts/*.ipa
+      - build/Build/Products/Release-iphoneos/*.app
